@@ -1,0 +1,118 @@
+{
+  "theme": "Clean Corporate/Enterprise Dashboard",
+  "theme_preference": "light",
+  "archetype": "Swiss & High-Contrast (Authority, Clarity, Truth)",
+  "colors": {
+    "background": {
+      "default": "#F8F9FA",
+      "surface": "#FFFFFF",
+      "subtle": "#F1F5F9"
+    },
+    "primary": {
+      "brand": "#0F172A",
+      "interaction": "#2563EB",
+      "interaction_hover": "#1D4ED8"
+    },
+    "text": {
+      "primary": "#0F172A",
+      "secondary": "#475569",
+      "disabled": "#94A3B8"
+    },
+    "accents": {
+      "success": "#059669",
+      "warning": "#D97706",
+      "danger": "#DC2626",
+      "glow": "rgba(37, 99, 235, 0.5)"
+    },
+    "borders": {
+      "default": "#E2E8F0",
+      "focus": "#2563EB"
+    }
+  },
+  "typography": {
+    "fonts": {
+      "headings": "Chivo, sans-serif",
+      "body": "'IBM Plex Sans', sans-serif"
+    },
+    "hierarchy": {
+      "h1_page_title": "text-2xl sm:text-3xl font-bold tracking-tight text-slate-900",
+      "h2_section": "text-lg sm:text-xl font-semibold tracking-tight text-slate-900",
+      "table_header": "text-xs font-semibold uppercase tracking-[0.05em] text-slate-500",
+      "body": "text-sm text-slate-700 leading-relaxed",
+      "labels": "text-xs font-medium text-slate-600"
+    },
+    "rules": [
+      "DO NOT use Inter, Roboto, or Open Sans for headings.",
+      "Always use tight letter spacing for headings.",
+      "Table headers must be uppercase with wide spacing (tracking-[0.05em])."
+    ]
+  },
+  "spacing_and_layout": {
+    "general": "Dense and compact spacing for data-heavy sections, balanced with generous padding in structural containers.",
+    "page_container": "p-6 md:p-8 lg:p-12 max-w-7xl mx-auto w-full",
+    "filter_bar_grid": "grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4 items-end mb-6",
+    "surface_style": "Flat background, 1px subtle border (border-slate-200), max 8px border-radius (rounded-lg). NO heavy drop shadows.",
+    "table_container": "border border-slate-200 rounded-lg overflow-hidden bg-white"
+  },
+  "components": {
+    "header_nav": {
+      "style": "Solid background (bg-white) with a hard bottom border (border-slate-200).",
+      "layout": "Flex container, logo on left, navigation links centered or right, subtle active state (border-b-2 border-blue-600) for current page.",
+      "rules": "No transparent header. Must be distinct from content body."
+    },
+    "filters": {
+      "dropdown": "Shadcn Select component. border-slate-200, rounded-md, text-sm.",
+      "date_range": "Shadcn Popover + Calendar. Crisp, 1px border. Do not use native input[type='date'].",
+      "text_search": "Shadcn Input with a left-aligned Search icon (Phosphor icons).",
+      "radio_checkbox": "Shadcn Checkbox/RadioGroup. High contrast checked state (bg-blue-600).",
+      "button": "Primary action button. bg-blue-600 hover:bg-blue-700 text-white rounded-md text-sm font-medium px-4 py-2 transition-colors."
+    },
+    "data_table": {
+      "style": "Shadcn Table component. Dense row height.",
+      "header_row": "bg-slate-50 border-b border-slate-200.",
+      "body_row": "hover:bg-slate-50/80 transition-colors border-b border-slate-100 last:border-0.",
+      "pagination": "Simple previous/next buttons + page numbers. Right aligned below table."
+    },
+    "avatar_popup_lisa": {
+      "concept": "The Crystal Glass / Floating Assistant",
+      "container": "fixed bottom-6 right-6 w-80 md:w-96 rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.12)] border border-slate-200 bg-white/90 backdrop-blur-xl backdrop-saturate-150 z-50 overflow-hidden flex flex-col",
+      "header": "Flex row, title 'Lisa AI Assistant', status indicator (green dot for live), close/minimize toggle button.",
+      "video_area": "h-48 md:h-56 w-full bg-slate-900 relative overflow-hidden. When active, subtle animated 'Tracing Beam' border glow or inner shadow to indicate listening/speaking.",
+      "status_area": "h-24 p-4 bg-white/50 border-t border-slate-100 text-sm text-slate-600 overflow-y-auto flex flex-col justify-end",
+      "toggle_button": "When collapsed, a floating circular button (h-14 w-14) with an AI/Sparkle icon, bg-blue-600 text-white shadow-lg hover:-translate-y-1 transition-transform."
+    }
+  },
+  "motion": {
+    "buttons": "transition-transform active:scale-95 duration-150",
+    "table_rows": "Staggered fade-in on initial load. transition-colors duration-200 on hover.",
+    "avatar_popup": "framer-motion spring animation for opening/closing the popup (y-axis slide + opacity).",
+    "rules": "Respect prefers-reduced-motion. Do not use 'transition: all'."
+  },
+  "icons": {
+    "library": "@phosphor-icons/react",
+    "style": "Regular or Duotone weight for corporate, 1.25rem (20px) standard size."
+  },
+  "image_urls": {
+    "lisa_avatar_placeholder": {
+      "url": "https://images.unsplash.com/photo-1506863530036-1efeddceb993?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2Mzl8MHwxfHNlYXJjaHwxfHxwcm9mZXNzaW9uYWwlMjB3b21hbiUyMHBvcnRyYWl0JTIwc3R1ZGlvfGVufDB8fHx8MTc4NzUxMzIwMHww&ixlib=rb-4.1.0&q=85",
+      "description": "Professional woman portrait to be used as a fallback/placeholder video poster for the Lisa Azure Voice Avatar."
+    }
+  },
+  "accessibility": {
+    "contrast": "Ensure all text meets APCA/WCAG AA contrast ratios against backgrounds.",
+    "testing": "All interactive elements (buttons, inputs, filters, pagination, toggle avatar) MUST include standard data-testid attributes (e.g. data-testid='order-search-btn').",
+    "focus": "focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none"
+  },
+  "instructions_to_main_agent": [
+    "You are building a React.js (not TSX) SPA with Tailwind CSS.",
+    "Use Shadcn UI components but heavily customize them to remove the 'default Vercel' look according to the style rules.",
+    "Seed the app with 1000 mocked records internally and ensure pagination actually slices through this mocked array.",
+    "Build the Order Search and Items Search pages as distinct routes or conditionally rendered views driven by the Top Nav.",
+    "Implement the 'Lisa' Voice Avatar popup. MOCK the Azure live connection by playing the static placeholder image, but build out the UI shell (video container, live transcription text area, toggle mechanism).",
+    "Ensure the floating avatar widget persists across both pages.",
+    "Use @phosphor-icons/react for all icons.",
+    "Inject the 'Chivo' and 'IBM Plex Sans' fonts via Google Fonts in index.html.",
+    "Install 'framer-motion' for the popup transitions.",
+    "Do NOT add a generic App { text-align: center } to your CSS."
+  ]
+}
