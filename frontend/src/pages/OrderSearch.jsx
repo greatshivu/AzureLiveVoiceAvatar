@@ -47,11 +47,12 @@ const columns = [
 export default function OrderSearch() {
   const { filters, set, page, data, loading, onSearch, onReset, onPage } = useSearch(
     searchOrders,
-    buildExtra
+    buildExtra,
+    "orders"
   );
 
   return (
-    <div data-testid="order-search-page" className="p-6 md:p-8 lg:p-10 max-w-7xl mx-auto w-full">
+    <div data-testid="order-search-page" className="p-6 md:p-8 lg:p-10 pb-28 max-w-7xl mx-auto w-full">
       <div className="mb-6">
         <h1 className="font-heading text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">
           Order Search

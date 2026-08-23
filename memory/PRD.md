@@ -25,8 +25,10 @@ Single Page Application with 2 pages: Order Search and Items Search, each with p
 - `/api/orders/search` & `/api/items/search`: dropdown, radio, checkbox, keyword, date-range filters + pagination (page_size 10).
 - `/api/config`, `/api/avatar/credentials` (Speech token + ICE relay), `/api/avatar/chat` (Foundry proxy with poll loop).
 - Frontend: corporate dashboard (Chivo/IBM Plex Sans), reusable FilterBar/ResultsTable/PaginationBar, two pages, top nav.
-- LisaAvatar floating popup: FAB → glass popup, power switch, live video/audio via Speech SDK WebRTC, continuous STT → Foundry → avatar speech; text-input fallback; graceful "not configured" states.
-- Backend & frontend tested (100% pass, iteration_1). Committed locally.
+- LisaAvatar floating popup: FAB → glass popup, power switch, live video/audio via Speech SDK WebRTC, continuous STT → intent router → avatar speech; command box; graceful "not configured" states.
+- **Barge-in**: recognizer stays live while Lisa speaks; a new utterance calls stopSpeakingAsync() to cut her off, then processes the command.
+- **Voice Search Actions**: parseCommand (lib/voiceCommands.js) classifies utterances into navigate / search / chat. Search commands set status/priority/category/condition/paid/in-stock/keyword/pagination/reset filters and drive the on-screen table via a pub/sub bus (lib/voiceBus.js). Navigation commands ("go to Items Search") route between pages and keep listening. Command box drives the UI even before Azure is configured.
+- Backend & frontend tested (iteration_1 100%, iteration_2 voice UI 100%). Committed locally.
 
 ## Backlog / Remaining
 - **P0 (user action)**: Fill Azure env vars in `/app/backend/.env` to enable the live avatar; verify WebRTC (allow UDP 3478 / TCP 443 to relay.communication.microsoft.com).

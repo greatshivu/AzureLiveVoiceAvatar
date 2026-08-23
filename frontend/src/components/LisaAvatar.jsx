@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Sparkle,
@@ -12,6 +13,8 @@ import { Switch } from "./ui/switch";
 import { Input } from "./ui/input";
 import { Button } from "./ui/button";
 import { getConfig, getAvatarCredentials, sendChat } from "../lib/api";
+import { parseCommand, describeSearch } from "../lib/voiceCommands";
+import { dispatchSearch } from "../lib/voiceBus";
 import * as SpeechSDK from "microsoft-cognitiveservices-speech-sdk";
 
 const POSTER =
@@ -29,6 +32,8 @@ const STATUS_TEXT = {
 const getSDK = () => SpeechSDK;
 
 export const LisaAvatar = () => {
+  const navigate = useNavigate();
+  const location = useLocation();
   const [expanded, setExpanded] = useState(false);
   const [avatarOn, setAvatarOn] = useState(false);
   const [status, setStatus] = useState("idle");
@@ -44,6 +49,9 @@ export const LisaAvatar = () => {
   const recognizerRef = useRef(null);
   const threadRef = useRef(null);
   const speakingRef = useRef(false);
+  const processingRef = useRef(false);
+  const avatarOnRef = useRef(false);
+  const locationRef = useRef(location.pathname);
   const scrollRef = useRef(null);
 
   useEffect(() => {
@@ -51,55 +59,114 @@ export const LisaAvatar = () => {
   }, []);
 
   useEffect(() => {
+    locationRef.current = location.pathname;
+  }, [location.pathname]);
+
+  useEffect(() => {
+    avatarOnRef.current = avatarOn;
+  }, [avatarOn]);
+
+  useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages, status]);
+
+  const currentKey = () => (locationRef.current.startsWith("/items") ? "items" : "orders");
+  const routeFor = (target) => (target === "items" ? "/items" : "/orders");
 
   const pushMessage = (role, text) =>
     setMessages((m) => [...m.slice(-20), { role, text, id: Date.now() + Math.random() }]);
 
   const speak = (text) =>
     new Promise((resolve) => {
-      if (!synthRef.current) return resolve();
+      if (!synthRef.current || !text) return resolve();
+      speakingRef.current = true;
       synthRef.current.speakTextAsync(
         text,
-        () => resolve(),
-        () => resolve()
+        () => {
+          speakingRef.current = false;
+          resolve();
+        },
+        () => {
+          speakingRef.current = false;
+          resolve();
+        }
       );
     });
 
-  const pauseListening = () =>
+  const stopSpeaking = () =>
     new Promise((resolve) => {
-      if (recognizerRef.current) recognizerRef.current.stopContinuousRecognitionAsync(resolve, resolve);
-      else resolve();
+      if (synthRef.current?.stopSpeakingAsync) {
+        synthRef.current.stopSpeakingAsync(
+          () => {
+            speakingRef.current = false;
+            resolve();
+          },
+          () => {
+            speakingRef.current = false;
+            resolve();
+          }
+        );
+      } else {
+        speakingRef.current = false;
+        resolve();
+      }
     });
 
-  const resumeListening = () => {
-    if (recognizerRef.current) recognizerRef.current.startContinuousRecognitionAsync();
+  const say = async (text) => {
+    pushMessage("assistant", text);
+    if (synthRef.current) {
+      setStatus("speaking");
+      await speak(text);
+    }
   };
 
-  const handleUtterance = async (text) => {
-    const clean = (text || "").trim();
-    if (!clean || speakingRef.current) return;
-    speakingRef.current = true;
+  const handleUtterance = async (raw) => {
+    const clean = (raw || "").trim();
+    if (!clean) return;
+
+    // Barge-in: if Lisa is mid-sentence, cut her off immediately.
+    if (speakingRef.current) {
+      await stopSpeaking();
+      setStatus("listening");
+    }
+    // Don't stack an in-flight agent request.
+    if (processingRef.current) return;
+    processingRef.current = true;
     pushMessage("user", clean);
-    setStatus("thinking");
-    await pauseListening();
+
     try {
-      const res = await sendChat(clean, threadRef.current);
-      threadRef.current = res.thread_id;
-      pushMessage("assistant", res.text);
-      setStatus("speaking");
-      await speak(res.text);
+      const cur = currentKey();
+      const intent = parseCommand(clean, cur);
+
+      if (intent.type === "navigate") {
+        navigate(routeFor(intent.target));
+        await say(
+          `Opening ${intent.target === "items" ? "Items" : "Order"} Search. I'm listening.`
+        );
+      } else if (intent.type === "search") {
+        const targetKey = intent.target || cur;
+        if (targetKey !== cur) navigate(routeFor(targetKey));
+        dispatchSearch(targetKey, {
+          filters: intent.filters,
+          page: intent.page,
+          reset: intent.reset,
+        });
+        await say(describeSearch(intent, targetKey));
+      } else {
+        setStatus("thinking");
+        const res = await sendChat(clean, threadRef.current);
+        threadRef.current = res.thread_id;
+        await say(res.text);
+      }
     } catch (e) {
       const msg =
         e?.response?.status === 503
-          ? "The Foundry agent isn't configured yet. Add the FOUNDRY_* environment variables."
+          ? "The Foundry agent isn't configured yet. Add the FOUNDRY_* environment variables to answer general questions. Navigation and search still work."
           : "I couldn't reach the agent. Please try again.";
-      pushMessage("assistant", msg);
+      await say(msg);
     } finally {
-      speakingRef.current = false;
-      setStatus("listening");
-      resumeListening();
+      processingRef.current = false;
+      setStatus(avatarOnRef.current ? "listening" : "idle");
     }
   };
 
@@ -162,8 +229,8 @@ export const LisaAvatar = () => {
 
       setStatus("listening");
       const greeting = config.foundry_configured
-        ? "Hi, I'm Lisa. How can I help you search your orders and items today?"
-        : "Hi, I'm Lisa. The agent brain isn't connected yet, but my avatar is live.";
+        ? "Hi, I'm Lisa. Ask me to search your orders or items, or say 'go to Items Search'. I'm listening."
+        : "Hi, I'm Lisa. Tell me things like 'show delivered orders' or 'go to Items Search' and I'll drive the screen for you.";
       pushMessage("assistant", greeting);
       await speak(greeting);
     } catch (e) {
@@ -203,7 +270,7 @@ export const LisaAvatar = () => {
     const t = textInput.trim();
     if (!t) return;
     setTextInput("");
-    if (avatarOn) handleUtterance(t);
+    handleUtterance(t);
   };
 
   const isLive = ["listening", "thinking", "speaking"].includes(status);
@@ -339,7 +406,7 @@ export const LisaAvatar = () => {
               ))}
             </div>
 
-            {/* Text input */}
+            {/* Command input (works by voice when live, or type anytime) */}
             <div className="flex items-center gap-2 p-3 border-t border-slate-100">
               <Microphone
                 size={18}
@@ -351,14 +418,12 @@ export const LisaAvatar = () => {
                 value={textInput}
                 onChange={(e) => setTextInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && onSendText()}
-                placeholder={avatarOn ? "Type a command…" : "Turn on to chat"}
-                disabled={!avatarOn}
+                placeholder="e.g. show delivered orders"
                 className="h-8 text-sm border-slate-200"
               />
               <Button
                 size="sm"
                 onClick={onSendText}
-                disabled={!avatarOn}
                 data-testid="lisa-send-btn"
                 className="h-8 w-8 p-0 bg-blue-600 hover:bg-blue-700"
               >

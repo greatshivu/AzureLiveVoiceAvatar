@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { format } from "date-fns";
+import { registerSearchHandler } from "./voiceBus";
 
 const emptyState = {
   search: "",
@@ -9,7 +10,7 @@ const emptyState = {
   range: undefined,
 };
 
-export const useSearch = (fetchFn, buildExtra) => {
+export const useSearch = (fetchFn, buildExtra, pageKey) => {
   const [filters, setFilters] = useState(emptyState);
   const applied = useRef({ ...emptyState });
   const [page, setPage] = useState(1);
@@ -61,6 +62,42 @@ export const useSearch = (fetchFn, buildExtra) => {
     setPage(p);
     run(applied.current, p);
   };
+
+  // Voice-command handler: Lisa dispatches parsed commands here.
+  const applyCommand = useCallback(
+    (cmd) => {
+      if (!cmd) return;
+      if (cmd.reset) {
+        onReset();
+        return;
+      }
+      if (cmd.page) {
+        setPage((p) => {
+          const np =
+            cmd.page === "next"
+              ? p + 1
+              : cmd.page === "prev"
+              ? Math.max(1, p - 1)
+              : Math.max(1, cmd.page);
+          run(applied.current, np);
+          return np;
+        });
+        return;
+      }
+      const next = { ...emptyState, ...(cmd.filters || {}) };
+      setFilters(next);
+      applied.current = next;
+      setPage(1);
+      run(next, 1);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [run]
+  );
+
+  useEffect(() => {
+    if (!pageKey) return;
+    return registerSearchHandler(pageKey, applyCommand);
+  }, [pageKey, applyCommand]);
 
   return { filters, set, page, data, loading, onSearch, onReset, onPage };
 };
