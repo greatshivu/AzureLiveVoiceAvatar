@@ -37,3 +37,9 @@ Single Page Application with 2 pages: Order Search and Items Search, each with p
 
 ## Next Tasks
 - Await user's Azure config + testing feedback; then wire real-time verification and any UX tweaks.
+
+## Config-Driven Architecture (2026-08-23)
+- Single registry `frontend/src/config/pages.jsx` (`PAGES`) defines every page: route, aliases, controls (text/select/radio/checkbox/daterange), table columns, `speakRow`, and hint chips.
+- Generic rendering: `pages/SearchPage.jsx` + `components/DynamicFilterBar.jsx` + `lib/useSearch.js` render any page from config; `App.js` & `Navbar.jsx` generate routes/links from `PAGES`.
+- Config-driven avatar: `lib/voiceCommands.js::parseCommand` analyzes `PAGES` to detect target page (alias weight 3, control-option words weight 2), extract filters per control, and build read-out/confirmation text. Adding a page (+ its backend endpoint) auto-extends navigation, search, read-out and hints with no parser/UI changes. See `/app/ADDING_A_PAGE.md`.
+- Verified 100% (iteration_4): dynamic filters, pagination, cross-page voice auto-navigation ("electronics in stock" from /orders → /items), read-out, per-page hints.

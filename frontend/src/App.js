@@ -2,8 +2,8 @@ import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Navbar } from "@/components/Navbar";
 import { LisaAvatar } from "@/components/LisaAvatar";
-import OrderSearch from "@/pages/OrderSearch";
-import ItemsSearch from "@/pages/ItemsSearch";
+import SearchPage from "@/pages/SearchPage";
+import { PAGES } from "@/config/pages";
 
 function App() {
   return (
@@ -12,10 +12,11 @@ function App() {
         <Navbar />
         <main>
           <Routes>
-            <Route path="/" element={<Navigate to="/orders" replace />} />
-            <Route path="/orders" element={<OrderSearch />} />
-            <Route path="/items" element={<ItemsSearch />} />
-            <Route path="*" element={<Navigate to="/orders" replace />} />
+            <Route path="/" element={<Navigate to={PAGES[0].route} replace />} />
+            {PAGES.map((p) => (
+              <Route key={p.key} path={p.route} element={<SearchPage key={p.key} page={p} />} />
+            ))}
+            <Route path="*" element={<Navigate to={PAGES[0].route} replace />} />
           </Routes>
         </main>
         <LisaAvatar />

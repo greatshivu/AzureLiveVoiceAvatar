@@ -16,16 +16,8 @@ import { Checkbox } from "./ui/checkbox";
 import { getConfig, getAvatarCredentials, sendChat } from "../lib/api";
 import { parseCommand, describeSearch, readRow } from "../lib/voiceCommands";
 import { dispatchSearch, getResults } from "../lib/voiceBus";
+import { PAGES, pageByKey, pageByRoute, routeFor } from "../config/pages";
 import * as SpeechSDK from "microsoft-cognitiveservices-speech-sdk";
-
-const HINTS = [
-  "Show delivered orders",
-  "Go to Items Search",
-  "Electronics in stock",
-  "Read the top order",
-  "Next page",
-  "Reset filters",
-];
 
 const POSTER =
   "https://images.unsplash.com/photo-1506863530036-1efeddceb993?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2Mzl8MHwxfHNlYXJjaHwxfHxwcm9mZXNzaW9uYWwlMjB3b21hbiUyMHBvcnRyYWl0JTIwc3R1ZGlvfGVufDB8fHx8MTc4NzUxMzIwMHww&ixlib=rb-4.1.0&q=85";
@@ -92,8 +84,7 @@ export const LisaAvatar = () => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages, status]);
 
-  const currentKey = () => (locationRef.current.startsWith("/items") ? "items" : "orders");
-  const routeFor = (target) => (target === "items" ? "/items" : "/orders");
+  const currentKey = () => pageByRoute(locationRef.current).key;
 
   const pushMessage = (role, text) =>
     setMessages((m) => [...m.slice(-20), { role, text, id: Date.now() + Math.random() }]);
@@ -144,8 +135,8 @@ export const LisaAvatar = () => {
 
   const runSearchWithCount = async (intent, targetKey, cur) => {
     if (targetKey !== cur) navigate(routeFor(targetKey));
-    const base = describeSearch(intent, targetKey);
-    const label = targetKey === "items" ? "items" : "orders";
+    const page = pageByKey(targetKey);
+    const base = describeSearch(intent, page);
     const total = await new Promise((resolve) => {
       let done = false;
       const finish = (v) => {
@@ -162,30 +153,33 @@ export const LisaAvatar = () => {
       });
       setTimeout(() => finish(null), 5000);
     });
-    const count = total == null ? "" : ` That's ${total.toLocaleString()} matching ${label}.`;
+    const count = total == null ? "" : ` That's ${total.toLocaleString()} matching ${page.noun}.`;
     await say(`${base}${count}`);
   };
 
   const readTopRow = async (intent, cur) => {
     const targetKey = intent.target || cur;
-    if (targetKey !== cur) {
-      navigate(routeFor(targetKey));
-      await new Promise((r) => setTimeout(r, 400));
+    const page = pageByKey(targetKey);
+    if (targetKey !== cur) navigate(routeFor(targetKey));
+    // wait for the (possibly just-navigated) page to publish its rows
+    let rows = getResults(targetKey);
+    for (let i = 0; i < 15 && rows.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 200));
+      rows = getResults(targetKey);
     }
-    const rows = getResults(targetKey);
     if (!rows.length) {
       await say("There are no results to read yet. Try a search first.");
       return;
     }
     const idx = intent.index < 0 ? rows.length - 1 : Math.min(intent.index, rows.length - 1);
-    await say(readRow(rows[idx], targetKey));
+    await say(readRow(rows[idx], page));
   };
 
   const processCommand = async (text, cur) => {
     const intent = parseCommand(text, cur);
     if (intent.type === "navigate") {
       navigate(routeFor(intent.target));
-      await say(`Opening ${intent.target === "items" ? "Items" : "Order"} Search. I'm listening.`);
+      await say(`Opening ${pageByKey(intent.target).title}. I'm listening.`);
     } else if (intent.type === "read") {
       await readTopRow(intent, cur);
     } else if (intent.type === "search") {
@@ -349,6 +343,11 @@ export const LisaAvatar = () => {
   };
 
   const isLive = ["listening", "thinking", "speaking"].includes(status);
+  const curPage = pageByRoute(location.pathname);
+  const hints = [
+    ...(curPage.hints || []),
+    ...PAGES.filter((p) => p.key !== curPage.key).map((p) => `Go to ${p.title}`),
+  ];
 
   return (
     <>
@@ -519,11 +518,11 @@ export const LisaAvatar = () => {
               <span className="text-[10px] uppercase tracking-wide text-slate-400 w-full mb-0.5">
                 Try saying…
               </span>
-              {HINTS.map((h) => (
+              {hints.map((h) => (
                 <button
                   key={h}
                   onClick={() => handleUtterance(h)}
-                  data-testid={`lisa-hint-${h.toLowerCase().replace(/\s+/g, "-")}`}
+                  data-testid={`lisa-hint-${h.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`}
                   className="text-[11px] px-2 py-1 rounded-full border border-slate-200 bg-white text-slate-600 hover:border-blue-400 hover:text-blue-600 transition-colors active:scale-95"
                 >
                   {h}
