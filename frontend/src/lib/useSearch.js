@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { format } from "date-fns";
-import { registerSearchHandler } from "./voiceBus";
+import { registerSearchHandler, publishResults } from "./voiceBus";
 
 const emptyState = {
   search: "",
@@ -14,10 +14,15 @@ export const useSearch = (fetchFn, buildExtra, pageKey) => {
   const [filters, setFilters] = useState(emptyState);
   const applied = useRef({ ...emptyState });
   const [page, setPage] = useState(1);
+  const pageRef = useRef(1);
   const [data, setData] = useState({ results: [], total: 0, total_pages: 1, page_size: 10 });
   const [loading, setLoading] = useState(false);
 
   const set = (key, value) => setFilters((f) => ({ ...f, [key]: value }));
+
+  useEffect(() => {
+    pageRef.current = page;
+  }, [page]);
 
   const run = useCallback(
     async (state, pageArg) => {
@@ -29,14 +34,18 @@ export const useSearch = (fetchFn, buildExtra, pageKey) => {
         if (state.search) params.q = state.search;
         const res = await fetchFn(params);
         setData(res);
+        if (pageKey) publishResults(pageKey, res.results);
+        return res;
       } catch (e) {
         console.error("search failed", e);
-        setData({ results: [], total: 0, total_pages: 1, page_size: 10 });
+        const empty = { results: [], total: 0, total_pages: 1, page_size: 10 };
+        setData(empty);
+        return empty;
       } finally {
         setLoading(false);
       }
     },
-    [fetchFn, buildExtra]
+    [fetchFn, buildExtra, pageKey]
   );
 
   useEffect(() => {
@@ -65,30 +74,31 @@ export const useSearch = (fetchFn, buildExtra, pageKey) => {
 
   // Voice-command handler: Lisa dispatches parsed commands here.
   const applyCommand = useCallback(
-    (cmd) => {
+    async (cmd) => {
       if (!cmd) return;
+      let res;
       if (cmd.reset) {
-        onReset();
-        return;
+        setFilters(emptyState);
+        applied.current = { ...emptyState };
+        setPage(1);
+        res = await run(emptyState, 1);
+      } else if (cmd.page) {
+        const np =
+          cmd.page === "next"
+            ? pageRef.current + 1
+            : cmd.page === "prev"
+            ? Math.max(1, pageRef.current - 1)
+            : Math.max(1, cmd.page);
+        setPage(np);
+        res = await run(applied.current, np);
+      } else {
+        const next = { ...emptyState, ...(cmd.filters || {}) };
+        setFilters(next);
+        applied.current = next;
+        setPage(1);
+        res = await run(next, 1);
       }
-      if (cmd.page) {
-        setPage((p) => {
-          const np =
-            cmd.page === "next"
-              ? p + 1
-              : cmd.page === "prev"
-              ? Math.max(1, p - 1)
-              : Math.max(1, cmd.page);
-          run(applied.current, np);
-          return np;
-        });
-        return;
-      }
-      const next = { ...emptyState, ...(cmd.filters || {}) };
-      setFilters(next);
-      applied.current = next;
-      setPage(1);
-      run(next, 1);
+      if (cmd.onResult) cmd.onResult(res?.total ?? 0);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [run]

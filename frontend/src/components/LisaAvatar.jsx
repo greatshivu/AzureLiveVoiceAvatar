@@ -12,10 +12,20 @@ import {
 import { Switch } from "./ui/switch";
 import { Input } from "./ui/input";
 import { Button } from "./ui/button";
+import { Checkbox } from "./ui/checkbox";
 import { getConfig, getAvatarCredentials, sendChat } from "../lib/api";
-import { parseCommand, describeSearch } from "../lib/voiceCommands";
-import { dispatchSearch } from "../lib/voiceBus";
+import { parseCommand, describeSearch, readRow } from "../lib/voiceCommands";
+import { dispatchSearch, getResults } from "../lib/voiceBus";
 import * as SpeechSDK from "microsoft-cognitiveservices-speech-sdk";
+
+const HINTS = [
+  "Show delivered orders",
+  "Go to Items Search",
+  "Electronics in stock",
+  "Read the top order",
+  "Next page",
+  "Reset filters",
+];
 
 const POSTER =
   "https://images.unsplash.com/photo-1506863530036-1efeddceb993?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2Mzl8MHwxfHNlYXJjaHwxfHxwcm9mZXNzaW9uYWwlMjB3b21hbiUyMHBvcnRyYWl0JTIwc3R1ZGlvfGVufDB8fHx8MTc4NzUxMzIwMHww&ixlib=rb-4.1.0&q=85";
@@ -41,6 +51,8 @@ export const LisaAvatar = () => {
   const [config, setConfig] = useState({ speech_configured: false, foundry_configured: false });
   const [error, setError] = useState("");
   const [textInput, setTextInput] = useState("");
+  const [autoInterrupt, setAutoInterrupt] = useState(true);
+  const [interruptKeyword, setInterruptKeyword] = useState("hold on");
 
   const videoRef = useRef(null);
   const audioRef = useRef(null);
@@ -51,12 +63,22 @@ export const LisaAvatar = () => {
   const speakingRef = useRef(false);
   const processingRef = useRef(false);
   const avatarOnRef = useRef(false);
+  const autoInterruptRef = useRef(true);
+  const interruptKeywordRef = useRef("hold on");
   const locationRef = useRef(location.pathname);
   const scrollRef = useRef(null);
 
   useEffect(() => {
     getConfig().then(setConfig).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    autoInterruptRef.current = autoInterrupt;
+  }, [autoInterrupt]);
+
+  useEffect(() => {
+    interruptKeywordRef.current = (interruptKeyword || "").trim().toLowerCase() || "hold on";
+  }, [interruptKeyword]);
 
   useEffect(() => {
     locationRef.current = location.pathname;
@@ -120,44 +142,97 @@ export const LisaAvatar = () => {
     }
   };
 
+  const runSearchWithCount = async (intent, targetKey, cur) => {
+    if (targetKey !== cur) navigate(routeFor(targetKey));
+    const base = describeSearch(intent, targetKey);
+    const label = targetKey === "items" ? "items" : "orders";
+    const total = await new Promise((resolve) => {
+      let done = false;
+      const finish = (v) => {
+        if (!done) {
+          done = true;
+          resolve(v);
+        }
+      };
+      dispatchSearch(targetKey, {
+        filters: intent.filters,
+        page: intent.page,
+        reset: intent.reset,
+        onResult: (t) => finish(t),
+      });
+      setTimeout(() => finish(null), 5000);
+    });
+    const count = total == null ? "" : ` That's ${total.toLocaleString()} matching ${label}.`;
+    await say(`${base}${count}`);
+  };
+
+  const readTopRow = async (intent, cur) => {
+    const targetKey = intent.target || cur;
+    if (targetKey !== cur) {
+      navigate(routeFor(targetKey));
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    const rows = getResults(targetKey);
+    if (!rows.length) {
+      await say("There are no results to read yet. Try a search first.");
+      return;
+    }
+    const idx = intent.index < 0 ? rows.length - 1 : Math.min(intent.index, rows.length - 1);
+    await say(readRow(rows[idx], targetKey));
+  };
+
+  const processCommand = async (text, cur) => {
+    const intent = parseCommand(text, cur);
+    if (intent.type === "navigate") {
+      navigate(routeFor(intent.target));
+      await say(`Opening ${intent.target === "items" ? "Items" : "Order"} Search. I'm listening.`);
+    } else if (intent.type === "read") {
+      await readTopRow(intent, cur);
+    } else if (intent.type === "search") {
+      await runSearchWithCount(intent, intent.target || cur, cur);
+    } else {
+      setStatus("thinking");
+      const res = await sendChat(text, threadRef.current);
+      threadRef.current = res.thread_id;
+      await say(res.text);
+    }
+  };
+
   const handleUtterance = async (raw) => {
     const clean = (raw || "").trim();
     if (!clean) return;
 
-    // Barge-in: if Lisa is mid-sentence, cut her off immediately.
+    let text = clean;
+    // Barge-in handling while Lisa is talking.
     if (speakingRef.current) {
-      await stopSpeaking();
-      setStatus("listening");
+      if (autoInterruptRef.current) {
+        await stopSpeaking();
+        setStatus("listening");
+      } else {
+        const kw = interruptKeywordRef.current;
+        if (clean.toLowerCase().includes(kw)) {
+          await stopSpeaking();
+          setStatus("listening");
+          // strip the keyword; run any trailing command
+          const safeKw = kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          text = clean.replace(new RegExp(safeKw, "i"), "").replace(/^[,.\s]+/, "").trim();
+          if (!text) {
+            pushMessage("user", clean);
+            return;
+          }
+        } else {
+          // Not the interrupt word and auto-interrupt is off: ignore, keep speaking.
+          return;
+        }
+      }
     }
-    // Don't stack an in-flight agent request.
+
     if (processingRef.current) return;
     processingRef.current = true;
     pushMessage("user", clean);
 
     try {
-      const cur = currentKey();
-      const intent = parseCommand(clean, cur);
-
-      if (intent.type === "navigate") {
-        navigate(routeFor(intent.target));
-        await say(
-          `Opening ${intent.target === "items" ? "Items" : "Order"} Search. I'm listening.`
-        );
-      } else if (intent.type === "search") {
-        const targetKey = intent.target || cur;
-        if (targetKey !== cur) navigate(routeFor(targetKey));
-        dispatchSearch(targetKey, {
-          filters: intent.filters,
-          page: intent.page,
-          reset: intent.reset,
-        });
-        await say(describeSearch(intent, targetKey));
-      } else {
-        setStatus("thinking");
-        const res = await sendChat(clean, threadRef.current);
-        threadRef.current = res.thread_id;
-        await say(res.text);
-      }
+      await processCommand(text, currentKey());
     } catch (e) {
       const msg =
         e?.response?.status === 503
@@ -338,6 +413,36 @@ export const LisaAvatar = () => {
               </div>
             </div>
 
+            {/* Barge-in settings */}
+            <div className="flex items-center gap-3 px-4 py-2 border-b border-slate-100 bg-slate-50/60">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="lisa-autointerrupt"
+                  checked={autoInterrupt}
+                  onCheckedChange={(v) => setAutoInterrupt(!!v)}
+                  data-testid="lisa-autointerrupt-checkbox"
+                />
+                <label
+                  htmlFor="lisa-autointerrupt"
+                  className="text-[11px] font-medium text-slate-600 cursor-pointer select-none"
+                >
+                  Auto barge-in
+                </label>
+              </div>
+              {!autoInterrupt && (
+                <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                  <span className="text-[11px] text-slate-400 whitespace-nowrap">stop word</span>
+                  <Input
+                    value={interruptKeyword}
+                    onChange={(e) => setInterruptKeyword(e.target.value)}
+                    data-testid="lisa-interrupt-keyword"
+                    placeholder="hold on"
+                    className="h-6 text-[11px] px-2 border-slate-200"
+                  />
+                </div>
+              )}
+            </div>
+
             {/* Video area */}
             <div
               className={`relative h-48 md:h-56 w-full bg-slate-900 ${isLive ? "lisa-active-glow" : ""}`}
@@ -403,6 +508,26 @@ export const LisaAvatar = () => {
                 >
                   {m.text}
                 </div>
+              ))}
+            </div>
+
+            {/* Command hints */}
+            <div
+              data-testid="lisa-hints"
+              className="flex flex-wrap gap-1.5 px-3 pt-2.5 pb-1 border-t border-slate-100"
+            >
+              <span className="text-[10px] uppercase tracking-wide text-slate-400 w-full mb-0.5">
+                Try saying…
+              </span>
+              {HINTS.map((h) => (
+                <button
+                  key={h}
+                  onClick={() => handleUtterance(h)}
+                  data-testid={`lisa-hint-${h.toLowerCase().replace(/\s+/g, "-")}`}
+                  className="text-[11px] px-2 py-1 rounded-full border border-slate-200 bg-white text-slate-600 hover:border-blue-400 hover:text-blue-600 transition-colors active:scale-95"
+                >
+                  {h}
+                </button>
               ))}
             </div>
 

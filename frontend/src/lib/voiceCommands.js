@@ -74,15 +74,39 @@ const extractFilters = (t, target) => {
   return f;
 };
 
+const ORDINALS = [
+  [/\b(top|first|1st|number one)\b/, 0],
+  [/\b(second|2nd|number two)\b/, 1],
+  [/\b(third|3rd|number three)\b/, 2],
+  [/\b(fourth|4th)\b/, 3],
+  [/\b(fifth|5th)\b/, 4],
+  [/\b(last|bottom)\b/, -1],
+];
+
+const readIndex = (t) => {
+  for (const [re, idx] of ORDINALS) {
+    if (re.test(t)) return idx;
+  }
+  const rowNum = t.match(/\b(?:row|record|number|line|result)\s+(\d+)\b/);
+  if (rowNum) return Math.max(0, parseInt(rowNum[1], 10) - 1);
+  return 0; // default to the top row
+};
+
 export const parseCommand = (raw, current = "orders") => {
   const t = (raw || "").toLowerCase().trim().replace(/[.?!,]+$/g, "");
   if (!t) return { type: "chat" };
 
   const target = detectTarget(t, current);
 
+  // Read a row aloud
+  if (/\b(read|tell me|what(?:'s| is)|describe|speak)\b/.test(t) &&
+      /\b(order|item|product|row|record|result|line)\b/.test(t)) {
+    return { type: "read", target, index: readIndex(t) };
+  }
+
   // Pagination
   if (/\bnext page\b|\bgo forward\b/.test(t)) return { type: "search", target: current, page: "next" };
-  if (/\b(previous|prev|last) page\b|\bgo back\b/.test(t)) return { type: "search", target: current, page: "prev" };
+  if (/\b(previous|prev) page\b|\bgo back\b/.test(t)) return { type: "search", target: current, page: "prev" };
   const pageNum = t.match(/\b(?:go to )?page (\d+)\b/);
   if (pageNum) return { type: "search", target: current, page: parseInt(pageNum[1], 10) };
 
@@ -115,4 +139,14 @@ export const describeSearch = (intent, targetKey) => {
   if (f.search) parts.push(`matching "${f.search}"`);
   const desc = parts.length ? parts.join(", ") : "all";
   return `Showing ${desc} ${label}.`;
+};
+
+export const readRow = (row, targetKey) => {
+  if (!row) return "";
+  if (targetKey === "items") {
+    return `${row.name}, SKU ${row.sku}. Category ${row.category}, condition ${row.condition}. ` +
+      `${row.in_stock ? `${row.stock} in stock` : "Out of stock"}, priced at ${Math.round(row.price)} dollars, supplied by ${row.supplier}.`;
+  }
+  return `Order ${row.order_number} for ${row.customer_name}. Status ${row.status}, ${row.priority} priority, ` +
+    `${row.is_paid ? "paid" : "unpaid"}. Amount ${Math.round(row.amount)} dollars, region ${row.region}.`;
 };
