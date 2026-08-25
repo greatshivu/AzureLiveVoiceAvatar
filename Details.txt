@@ -1,10 +1,19 @@
 INITIAL
 MVP Complete — Nexus Console (Enterprise Search + Live Lisa Avatar)
-Two search pages (Order Search & Items Search), each with all 6 requested controls: dropdown filter, date-range picker, keyword text box, checkbox, radio-button group, and a Search button — plus working pagination over 1000 seeded MongoDB records each (100 pages). Verified 100% by backend + frontend testing.
-Persistent floating Lisa popup on both pages with an on/off toggle. It's wired to the real Azure live avatar flow: backend relays Speech token + WebRTC ICE relay token, streams the avatar video/audio via the Speech SDK, runs continuous mic STT, and proxies your Azure AI Foundry agent (threads→messages→runs). A text-input fallback is included.
+Two search pages (Order Search & Items Search), each with all 6 requested controls: dropdown filter, date-range picker, keyword text box, checkbox, radio-button group, and a Search button 
+— plus working pagination over 1000 seeded MongoDB records each (100 pages). Verified 100% by backend + frontend testing.
+
+Persistent floating Lisa popup on both pages with an on/off toggle. It's wired to the real Azure live avatar flow: backend relays Speech token + WebRTC ICE relay token, 
+streams the avatar video/audio via the Speech SDK, runs continuous mic STT, and proxies your Azure AI Foundry agent (threads→messages→runs). A text-input fallback is included.
+
 Clean corporate/enterprise UI (Chivo + IBM Plex Sans, slate/blue Swiss style, glassmorphism popup).
+
 Committed locally. To push: use the platform's "Save to GitHub" button (I can't push to your repo directly).
-⚠️ The live avatar is NOT yet active — it needs YOUR Azure keys. Add them to /app/backend/.env (placeholders are in place): AZURE_SPEECH_RESOURCE_NAME, AZURE_SPEECH_REGION, AZURE_SPEECH_KEY, FOUNDRY_PROJECT_ENDPOINT, FOUNDRY_AGENT_ID, and either FOUNDRY_API_KEY or AZURE_TENANT_ID/AZURE_CLIENT_ID/AZURE_CLIENT_SECRET, then sudo supervisorctl restart backend. Until then the popup opens and shows a graceful "not configured" message (avatar endpoints return 503 by design). Live WebRTC streaming with real keys was NOT verifiable in this environment, so please test that part after configuring.
+
+⚠️ The live avatar is NOT yet active — it needs YOUR Azure keys. Add them to /app/backend/.env (placeholders are in place): 
+AZURE_SPEECH_RESOURCE_NAME, AZURE_SPEECH_REGION, AZURE_SPEECH_KEY, FOUNDRY_PROJECT_ENDPOINT, FOUNDRY_AGENT_ID, and either FOUNDRY_API_KEY or AZURE_TENANT_ID/AZURE_CLIENT_ID/AZURE_CLIENT_SECRET, 
+then sudo supervisorctl restart backend. Until then the popup opens and shows a graceful "not configured" message (avatar endpoints return 503 by design). 
+Live WebRTC streaming with real keys was NOT verifiable in this environment, so please test that part after configuring.
 
 Next Action Items:
 Azure Go-Live: Add your Speech + Foundry keys to the backend .env and confirm Lisa streams and answers by voice
@@ -17,7 +26,8 @@ STAGE-1
 Feature Complete — Barge-In + Voice Search Actions
 Barge-In Listening: Lisa's mic stays live while she talks. If you speak mid-sentence, she immediately stops (stopSpeakingAsync) and processes your new command instead of finishing her turn.
 Voice Search Actions: Spoken (or typed) commands now drive the actual screen:
-Search: "show delivered orders", "high priority paid orders", "find order ORD-100200", "search electronics in stock", "refurbished items" → applies the matching dropdown/radio/checkbox/keyword filters and runs the search on the right page.
+Search: "show delivered orders", "high priority paid orders", "find order ORD-100200", "search electronics in stock", "refurbished items" 
+→ applies the matching dropdown/radio/checkbox/keyword filters and runs the search on the right page.
 Navigation: "go to Items Search" / "navigate to Order Search" → routes to that page and keeps listening (popup stays open).
 Extras: "next page" / "previous page" / "page 5", and "reset filters" also work by voice.
 Commands route through an intent parser → a pub/sub bus that controls the page tables; if a page isn't mounted yet, the command is buffered and applied right after navigation.
@@ -35,10 +45,19 @@ Command Hints: Show a small "try saying…" chip list in the popup so new users 
 
 STAGE-2
 Lisa Enhancements Complete
-Optional Barge-In (configurable): The popup now has an "Auto barge-in" checkbox (lisa-autointerrupt-checkbox, on by default). When ON, Lisa stops the moment you speak. When OFF, she keeps talking and only stops when you say the stop-word — shown in an editable field (lisa-interrupt-keyword, default "hold on"). Any command after the stop-word (e.g. "hold on, show items") is still executed. Keyword is regex-escaped so odd characters won't break it.
-Voice Confirmations: After every search Lisa reads back the count, e.g. "Showing Delivered orders. That's 186 matching orders." / "Cleared all filters. That's 1,000 matching orders." — driven by the real result total from the API.
-Command Hints: A "Try saying…" chip row (lisa-hints) with tappable examples (Show delivered orders, Go to Items Search, Electronics in stock, Read the top order, Next page, Reset filters). Tapping a chip runs it immediately.
-Row Read-Out: "read the top order" / "read the second order" / "read the top item" → Lisa speaks that row's key details (order #, customer, status, priority, amount / SKU, name, category, condition, stock, price). Says nothing-to-read if the table is empty.
+Optional Barge-In (configurable): The popup now has an "Auto barge-in" checkbox (lisa-autointerrupt-checkbox, on by default). When ON, Lisa stops the moment you speak. When OFF, 
+she keeps talking and only stops when you say the stop-word — shown in an editable field (lisa-interrupt-keyword, default "hold on"). 
+Any command after the stop-word (e.g. "hold on, show items") is still executed. Keyword is regex-escaped so odd characters won't break it.
+
+Voice Confirmations: After every search Lisa reads back the count, e.g. "Showing Delivered orders. That's 186 matching orders." / "Cleared all filters. That's 1,000 matching orders." 
+— driven by the real result total from the API.
+
+Command Hints: A "Try saying…" chip row (lisa-hints) with tappable examples (Show delivered orders, Go to Items Search, Electronics in stock, Read the top order, Next page, Reset filters). 
+Tapping a chip runs it immediately.
+
+Row Read-Out: "read the top order" / "read the second order" / "read the top item" → Lisa speaks that row's key details 
+(order #, customer, status, priority, amount / SKU, name, category, condition, stock, price). Says nothing-to-read if the table is empty.
+
 Testing agent verified all 7 scenarios at 100% via the popup command box + hint chips, with no regressions to navigation, pagination, or reset, and graceful handling of unknown questions while Azure is unconfigured. Committed locally.
 
 ⚠️ Live audio (mic → speech → avatar voice, and real spoken barge-in) still needs YOUR Azure Speech + Foundry keys in /app/backend/.env (then sudo supervisorctl restart backend); those audio paths couldn't be automated here, so please confirm after configuring. Use "Save to GitHub" to push.
@@ -54,7 +73,9 @@ The app is now driven by a single page registry — frontend/src/config/pages.js
 
 How it works
 
-Each entry in PAGES declares: route, aliases (how users name it by voice), controls (any mix of text/select/radio/checkbox/date-range with their query params + option/synonym words), table columns, a speakRow (read-out), and hints.
+Each entry in PAGES declares: route, aliases (how users name it by voice), controls (any mix of text/select/radio/checkbox/date-range with their query params + option/synonym words), 
+table columns, a speakRow (read-out), and hints.
+
 Generic rendering: SearchPage.jsx + DynamicFilterBar.jsx + useSearch.js build any page from that config; App.js and Navbar.jsx generate routes/links from it.
 The avatar analyzes the same registry at runtime: parseCommand scores the utterance against every page's aliases (weight 3) and control-option words (weight 2) to pick the target page, then extracts each control's value from the words spoken. So "electronics in stock" said on the Orders page auto-navigates to Items and applies Electronics + in-stock; "read the top invoice" would work the moment an Invoices page is added.
 I included /app/ADDING_A_PAGE.md — a copy-paste recipe (with an Invoices example) showing the one config object + one backend endpoint needed to add a page.
