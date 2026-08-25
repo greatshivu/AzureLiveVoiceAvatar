@@ -72,7 +72,7 @@ This section has moved here: [https://facebook.github.io/create-react-app/docs/t
 
 
 ## Dependency tree
-frontend@0.1.0 D:\sc\AI\AzureLiveAvatar\frontend
+```frontend@0.1.0 D:\sc\AI\AzureLiveAvatar\frontend
 ├─┬ @phosphor-icons/react@2.1.10
 │ ├── react-dom@19.0.0 deduped
 │ └── react@19.0.0 deduped
@@ -285,3 +285,4 @@ frontend@0.1.0 D:\sc\AI\AzureLiveAvatar\frontend
 └─┬ vaul@1.1.2
   ├── react-dom@19.0.0 deduped
   └── react@19.0.0 deduped
+```
