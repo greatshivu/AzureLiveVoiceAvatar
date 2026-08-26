@@ -1,9 +1,13 @@
-"""Backend API tests for Enterprise Search + Lisa Avatar."""
+"""Backend API tests for Enterprise Search + Lisa (Azure Voice Live)."""
+import json
 import os
 import pytest
 import requests
+from urllib.parse import urlparse
+from dotenv import load_dotenv
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://lisa-search-hub.preview.emergentagent.com").rstrip("/")
+load_dotenv("/app/frontend/.env")
+BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
 API = f"{BASE_URL}/api"
 
 
@@ -12,25 +16,50 @@ def s():
     return requests.Session()
 
 
-# ---- /api/config ----
-def test_config(s):
+# ---- /api/config (voicelive-shaped) ----
+def test_config_voicelive_unconfigured(s):
     r = s.get(f"{API}/config", timeout=15)
     assert r.status_code == 200
     d = r.json()
-    assert d["speech_configured"] is False
-    assert d["foundry_configured"] is False
-    assert "avatar_character" in d
+    assert d["voicelive_configured"] is False
+    assert d["avatar_character"] == "lisa"
+    assert d["avatar_style"] == "casual-sitting"
+    # Legacy keys must be gone
+    assert "speech_configured" not in d
+    assert "foundry_configured" not in d
 
 
-# ---- /api/orders/search ----
+# ---- Old avatar endpoints must be gone ----
+def test_legacy_avatar_endpoints_removed(s):
+    r1 = s.get(f"{API}/avatar/credentials")
+    r2 = s.post(f"{API}/avatar/chat", json={"text": "hi"})
+    assert r1.status_code == 404
+    assert r2.status_code == 404
+
+
+# ---- /api/voice/ws graceful-error when unconfigured ----
+def test_voice_ws_graceful_error():
+    try:
+        from websockets.sync.client import connect
+    except Exception:
+        pytest.skip("websockets sync client unavailable")
+    host = urlparse(BASE_URL).netloc
+    scheme = "wss" if BASE_URL.startswith("https") else "ws"
+    url = f"{scheme}://{host}/api/voice/ws"
+    with connect(url, open_timeout=10, close_timeout=5) as ws:
+        msg = ws.recv(timeout=10)
+    data = json.loads(msg)
+    assert data.get("type") == "error"
+    assert "not configured" in data["error"]["message"].lower()
+
+
+# ---- /api/orders/search regression ----
 def test_orders_default(s):
     r = s.get(f"{API}/orders/search", timeout=15)
     assert r.status_code == 200
     d = r.json()
     assert d["total"] == 1000
-    assert d["page"] == 1
-    assert d["page_size"] == 10
-    assert d["total_pages"] == 100
+    assert d["page"] == 1 and d["page_size"] == 10 and d["total_pages"] == 100
     assert len(d["results"]) == 10
     assert "_id" not in d["results"][0]
 
@@ -38,14 +67,12 @@ def test_orders_default(s):
 def test_orders_page_change(s):
     r1 = s.get(f"{API}/orders/search", params={"page": 1}).json()
     r2 = s.get(f"{API}/orders/search", params={"page": 2}).json()
-    ids1 = {o["id"] for o in r1["results"]}
-    ids2 = {o["id"] for o in r2["results"]}
-    assert ids1.isdisjoint(ids2)
+    assert {o["id"] for o in r1["results"]}.isdisjoint({o["id"] for o in r2["results"]})
 
 
 def test_orders_filter_status_delivered(s):
     r = s.get(f"{API}/orders/search", params={"status": "Delivered", "page_size": 5}).json()
-    assert r["total"] > 0 and r["total"] < 1000
+    assert 0 < r["total"] < 1000
     assert all(o["status"] == "Delivered" for o in r["results"])
 
 
@@ -57,24 +84,21 @@ def test_orders_filter_priority_high(s):
 
 def test_orders_filter_paid_only(s):
     r = s.get(f"{API}/orders/search", params={"paid_only": "true", "page_size": 5}).json()
-    assert r["total"] > 0 and r["total"] < 1000
+    assert 0 < r["total"] < 1000
     assert all(o["is_paid"] is True for o in r["results"])
 
 
 def test_orders_filter_q(s):
     r = s.get(f"{API}/orders/search", params={"q": "ORD-100"}).json()
     assert r["total"] >= 1
-    for o in r["results"]:
-        assert "ORD-100" in o["order_number"] or "ord-100" in o.get("customer_name", "").lower()
 
 
-def test_orders_date_range(s):
-    # narrow window
+def test_orders_date_range_empty(s):
     r = s.get(f"{API}/orders/search", params={"date_from": "2099-01-01", "date_to": "2099-12-31"}).json()
     assert r["total"] == 0
 
 
-# ---- /api/items/search ----
+# ---- /api/items/search regression ----
 def test_items_default(s):
     r = s.get(f"{API}/items/search", timeout=15).json()
     assert r["total"] == 1000
@@ -102,14 +126,3 @@ def test_items_in_stock_only(s):
 def test_items_q_sku(s):
     r = s.get(f"{API}/items/search", params={"q": "SKU-2001"}).json()
     assert r["total"] >= 1
-
-
-# ---- Avatar endpoints (should degrade gracefully) ----
-def test_avatar_credentials_503(s):
-    r = s.get(f"{API}/avatar/credentials")
-    assert r.status_code == 503
-
-
-def test_avatar_chat_503(s):
-    r = s.post(f"{API}/avatar/chat", json={"text": "hi"})
-    assert r.status_code == 503

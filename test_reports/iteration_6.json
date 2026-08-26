@@ -1,0 +1,52 @@
+{
+  "summary": "Iter 6 (Azure Voice Live migration). Verified full removal of classic Foundry code and Speech token relay. server.py contains: voicelive_configured(), _entra_token() (scope https://ai.azure.com/.default), _voicelive_url() building wss://<VOICELIVE_ENDPOINT>/voice-live/realtime with api-version + agent-project-name + agent-id/name + agent-version, _session_update() injecting avatar {character:'lisa', style:'casual-sitting', output_protocol:'webrtc'}, and WebSocket route /api/voice/ws relaying via websockets.connect (headers api-key OR Bearer Entra token). No /api/avatar/chat, /api/avatar/credentials, /speech token endpoints, no threads/messages/runs, no assistant_id or agent_id create-run left. Backend pytest: 15/15 pass, including: GET /api/config -> {voicelive_configured:false, avatar_character:'lisa', avatar_style:'casual-sitting'}; legacy /api/avatar/* return 404; WS /api/voice/ws (wss on public host) returns JSON {type:'error', error.message contains 'not configured'} and closes without crash; orders+items search regression intact (total=1000, filters/pagination/q/date). Frontend LisaAvatar.jsx code-inspected: no microsoft-cognitiveservices-speech-sdk import; uses new WebSocket to REACT_APP_BACKEND_URL with http->ws replaced, path /api/voice/ws; sends {type:'start', auto_turn}; on 'session.updated' builds RTCPeerConnection with session.avatar.ice_servers, adds mic track, addTransceiver('video',{direction:'recvonly'}), base64-encodes SDP and sends {type:'session.avatar.connect', client_sdp}; on 'session.avatar.connecting' base64-decodes server_sdp and setRemoteDescription; ontrack attaches video/audio elements. Frontend browser test (public URL): lisa-toggle-fab opens lisa-popup with lisa-video/lisa-transcript/lisa-text-input/lisa-send-btn/lisa-hints/lisa-autoturn-checkbox (checked by default)/lisa-power-switch/lisa-close-btn. Toggling power ON without Azure shows 'Azure Voice Live isn't configured yet...' in transcript, no crash. Config-driven commands verified: 'show delivered orders' -> 186 orders, 'high priority paid orders' -> 216, 'find order ORD-100200' -> 1, 'electronics in stock' -> auto-navigated to /items and 198 items, 'read the top order' -> reads ORD-100200 James Miller Delivered Low unpaid $1006 North America, 'go to Order Search'/'navigate to items search' navigate correctly, 'reset filters' -> 1,000, 'next page'/'previous page' work, hint chip lisa-hint-show-delivered-orders clickable and applies filter.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "code_inspection_verified": {
+    "server_no_avatar_chat": true,
+    "server_no_avatar_credentials": true,
+    "server_no_speech_token_relay": true,
+    "server_no_threads_messages_runs": true,
+    "server_no_assistant_id_or_agent_id_run": true,
+    "server_voicelive_ws_route": "/api/voice/ws",
+    "server_voicelive_url_shape": "wss://<VOICELIVE_ENDPOINT>/voice-live/realtime?api-version=...&agent-project-name=...&agent-id=...&agent-name=...&agent-version=...",
+    "server_session_update_avatar": {"character":"lisa","style":"casual-sitting","output_protocol":"webrtc","customized":false},
+    "server_entra_scope": "https://ai.azure.com/.default",
+    "LisaAvatar_no_speech_sdk": true,
+    "LisaAvatar_ws_url": "${REACT_APP_BACKEND_URL http->ws}/api/voice/ws",
+    "LisaAvatar_addTransceiver_video_recvonly": true,
+    "LisaAvatar_mic_addTrack": true,
+    "LisaAvatar_sdp_base64_encoded": true,
+    "LisaAvatar_session_avatar_connecting_setRemoteDescription": true
+  },
+  "backend_pytest": {"passed": 15, "failed": 0, "junit_xml": "/app/test_reports/pytest/pytest_results.xml"},
+  "frontend_flows_verified": [
+    "lisa-toggle-fab opens lisa-popup with all expected testids",
+    "lisa-autoturn-checkbox checked by default",
+    "lisa-power-switch ON (unconfigured) shows 'Azure Voice Live isn't configured yet...' transcript, no crash",
+    "'show delivered orders' -> Delivered (186)",
+    "'high priority paid orders' -> High+paid (216)",
+    "'find order ORD-100200' -> keyword filter (1)",
+    "'electronics in stock' auto-navigates to /items and filters (198)",
+    "'read the top order' reads top row",
+    "'go to Order Search'/'navigate to items search' navigate",
+    "'reset filters' restores 1,000",
+    "'next page'/'previous page' work",
+    "hint chip lisa-hint-show-delivered-orders clickable"
+  ],
+  "test_report_links": ["/app/backend/tests/backend_test.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py: _date_filter builds date_to as a string like '<date>T23:59:59.999999+00:00' but the field values in the DB are ISO strings — comparison works since both are strings, but a mixed len(date_to)==10 vs full-ISO branch is fragile. Consider normalizing.",
+    "server.py voice_ws: browser->azure loop calls json.loads(raw) — malformed frames from client will crash the coroutine and be silently caught by outer try. Non-blocking but adding a try/except around json.loads inside the loop would be more robust.",
+    "LisaAvatar.jsx sets <video muted> and separates audio via <audio autoPlay>. Correct, but relies on browser allowing autoPlay for the audio element. In some browsers this may require a user gesture even after switch click — worth a follow-up if live testing reveals silence.",
+    "Backend .env keeps VOICELIVE_API_VERSION default '2026-04-10' — good; ensure it's parameterized in code (it is).",
+    "server voice_ws: no timeout/heartbeat on the upstream websockets.connect — a stuck upstream will keep the browser socket half-open until the browser closes it. Consider ping_interval/ping_timeout."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "100% (15/15)", "frontend": "100%"},
+  "seed_data_creation": "None (existing 1,000 orders + 1,000 items).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Azure creds intentionally empty here, so the live WebRTC/avatar path cannot be exercised. When the user fills VOICELIVE_ENDPOINT + FOUNDRY_PROJECT_NAME + FOUNDRY_AGENT_ID (or NAME) + optionally FOUNDRY_AGENT_VERSION + either VOICELIVE_API_KEY or (AZURE_TENANT_ID/CLIENT_ID/CLIENT_SECRET) in backend/.env, /api/config voicelive_configured flips true and /api/voice/ws opens an upstream socket. Backend tests file is /app/backend/tests/backend_test.py (loads REACT_APP_BACKEND_URL via python-dotenv from frontend/.env). WS test uses websockets.sync.client on wss://<REACT_APP_BACKEND_URL host>/api/voice/ws."
+}
