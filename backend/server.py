@@ -37,9 +37,18 @@ AVATAR_CHARACTER = os.environ.get('AZURE_AVATAR_CHARACTER', 'lisa').strip() or '
 AVATAR_STYLE = os.environ.get('AZURE_AVATAR_STYLE', 'casual-sitting').strip() or 'casual-sitting'
 TTS_VOICE = os.environ.get('AZURE_TTS_VOICE', 'en-US-JennyNeural').strip() or 'en-US-JennyNeural'
 
-FOUNDRY_ENDPOINT = os.environ.get('FOUNDRY_PROJECT_ENDPOINT', '').strip().rstrip('/')
+FOUNDRY_ENDPOINT = os.environ.get('FOUNDRY_ENDPOINT', '').strip().rstrip('/')
+FOUNDRY_PROJECT = os.environ.get('FOUNDRY_PROJECT', '').strip()
 FOUNDRY_AGENT_ID = os.environ.get('FOUNDRY_AGENT_ID', '').strip()
+FOUNDRY_AGENT_VERSION = os.environ.get('FOUNDRY_AGENT_VERSION', '').strip()
 FOUNDRY_API_KEY = os.environ.get('FOUNDRY_API_KEY', '').strip()
+
+
+def foundry_base() -> str:
+    """New Azure AI Foundry (non-classic) project endpoint."""
+    if not (FOUNDRY_ENDPOINT and FOUNDRY_PROJECT):
+        return ''
+    return f"{FOUNDRY_ENDPOINT}/api/projects/{FOUNDRY_PROJECT}"
 
 _aad_token_cache = {"token": None, "expires_at": 0}
 
@@ -52,7 +61,7 @@ def foundry_configured() -> bool:
     has_auth = bool(FOUNDRY_API_KEY) or bool(
         os.environ.get('AZURE_TENANT_ID') and os.environ.get('AZURE_CLIENT_ID') and os.environ.get('AZURE_CLIENT_SECRET')
     )
-    return bool(FOUNDRY_ENDPOINT and FOUNDRY_AGENT_ID) and has_auth
+    return bool(FOUNDRY_ENDPOINT and FOUNDRY_PROJECT and FOUNDRY_AGENT_ID) and has_auth
 
 
 # ----------------------------------------------------------------------------
@@ -289,7 +298,7 @@ async def _foundry_headers() -> dict:
 
 
 async def _foundry(hc: httpx.AsyncClient, method: str, path: str, body: Optional[dict] = None) -> dict:
-    url = f"{FOUNDRY_ENDPOINT}/{path.lstrip('/')}"
+    url = f"{foundry_base()}/{path.lstrip('/')}"
     headers = await _foundry_headers()
     resp = await hc.request(method, url, headers=headers, json=body)
     if resp.status_code >= 400:
@@ -334,7 +343,7 @@ async def avatar_chat(req: ChatRequest):
         await _foundry(hc, "POST", f"threads/{thread_id}/messages?api-version=v1",
                        {"role": "user", "content": text})
         run = await _foundry(hc, "POST", f"threads/{thread_id}/runs?api-version=v1",
-                             {"assistant_id": FOUNDRY_AGENT_ID})
+                             {"agent_id": FOUNDRY_AGENT_ID})
 
         for _ in range(60):
             status = await _foundry(hc, "GET", f"threads/{thread_id}/runs/{run['id']}?api-version=v1")

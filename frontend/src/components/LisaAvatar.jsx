@@ -275,8 +275,8 @@ export const LisaAvatar = () => {
           audioRef.current.srcObject = event.streams[0];
         }
       };
-      pc.addTransceiver("video", { direction: "sendrecv" });
-      pc.addTransceiver("audio", { direction: "sendrecv" });
+      pc.addTransceiver("video", { direction: "recvonly" });
+      pc.addTransceiver("audio", { direction: "recvonly" });
 
       const avatarConfig = new SDK.AvatarConfig(c.avatar_character, c.avatar_style);
       const synth = new SDK.AvatarSynthesizer(speechConfig, avatarConfig);
