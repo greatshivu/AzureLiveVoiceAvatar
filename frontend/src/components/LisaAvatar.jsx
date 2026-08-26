@@ -42,6 +42,7 @@ export const LisaAvatar = () => {
   const wsRef = useRef(null);
   const pcRef = useRef(null);
   const micRef = useRef(null);
+  const negotiatedRef = useRef(false);
   const avatarOnRef = useRef(false);
   const autoTurnRef = useRef(true);
   const locationRef = useRef(location.pathname);
@@ -118,6 +119,8 @@ export const LisaAvatar = () => {
     });
 
   const setupWebRTC = async (session) => {
+    if (negotiatedRef.current) return;
+    negotiatedRef.current = true;
     setStatus("negotiating");
     const ice = session?.avatar?.ice_servers || session?.ice_servers || [];
     const pc = new RTCPeerConnection({ iceServers: ice });
@@ -125,6 +128,12 @@ export const LisaAvatar = () => {
     pc.ontrack = (ev) => {
       if (ev.track.kind === "video" && videoRef.current) videoRef.current.srcObject = ev.streams[0];
       else if (ev.track.kind === "audio" && audioRef.current) audioRef.current.srcObject = ev.streams[0];
+    };
+    // Voice Live also delivers realtime events (incl. transcripts) over a data channel.
+    pc.ondatachannel = (ev) => {
+      ev.channel.onmessage = (m) => {
+        if (typeof m.data === "string") handleServerEvent(m.data);
+      };
     };
     try {
       const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -142,50 +151,84 @@ export const LisaAvatar = () => {
     wsRef.current?.send(JSON.stringify({ type: "session.avatar.connect", client_sdp: packed }));
   };
 
+  // Pull a transcript string from any Voice Live event shape.
+  const extractTranscript = (e) => {
+    if (typeof e.transcript === "string" && e.transcript.trim()) return e.transcript.trim();
+    if (typeof e.text === "string" && e.text.trim()) return e.text.trim();
+    return "";
+  };
+
   const handleServerEvent = async (raw) => {
     let e;
     try { e = JSON.parse(raw); } catch { return; }
-    switch (e.type) {
-      case "error":
-        setError(e.error?.message || "Voice Live error");
+    const type = e.type || "";
+
+    // Avatar SDP answer can arrive on differently-named events; key off server_sdp.
+    if (e.server_sdp && pcRef.current) {
+      try {
+        const ans = JSON.parse(atob(e.server_sdp));
+        await pcRef.current.setRemoteDescription({ type: "answer", sdp: ans.sdp || ans });
+        setStatus("live");
+      } catch (err) {
+        setError("Avatar SDP negotiation failed.");
         setStatus("error");
-        pushMessage("assistant", e.error?.message || "Voice Live error");
-        break;
-      case "session.updated":
-        await setupWebRTC(e.session);
-        break;
-      case "session.avatar.connecting":
-        if (e.server_sdp && pcRef.current) {
-          try {
-            const ans = JSON.parse(atob(e.server_sdp));
-            await pcRef.current.setRemoteDescription({ type: "answer", sdp: ans.sdp });
-            setStatus("live");
-          } catch (err) {
-            setError("Avatar SDP negotiation failed.");
-            setStatus("error");
-          }
-        }
-        break;
-      case "conversation.item.input_audio_transcription.completed":
-        if (e.transcript) { pushMessage("user", e.transcript); runCommand(e.transcript); }
-        break;
-      case "response.audio_transcript.done":
-        if (e.transcript) pushMessage("assistant", e.transcript);
-        break;
-      default:
-        break;
+      }
+      return;
+    }
+
+    if (type === "error") {
+      setError(e.error?.message || "Voice Live error");
+      setStatus("error");
+      pushMessage("assistant", e.error?.message || "Voice Live error");
+      return;
+    }
+
+    if (type === "session.updated" || type === "session.created") {
+      await setupWebRTC(e.session || {});
+      return;
+    }
+
+    // USER speech transcription (drives on-screen voice commands) — accept all variants.
+    if (/input_audio_transcription/.test(type) && /(completed|done)$/.test(type)) {
+      const t = extractTranscript(e);
+      if (t) { pushMessage("user", t); runCommand(t); }
+      return;
+    }
+    if (type === "input_audio_buffer.committed" || type === "conversation.item.created") {
+      const t = extractTranscript(e) || extractTranscript(e.item || {});
+      if (t) { pushMessage("user", t); runCommand(t); }
+      return;
+    }
+
+    // ASSISTANT spoken transcript for display.
+    if (/audio_transcript\.(done|completed)$/.test(type) || /response\.(text|output_text)\.done$/.test(type)) {
+      const t = extractTranscript(e);
+      if (t) pushMessage("assistant", t);
+      return;
+    }
+
+    // Anything else: log to help diagnose the exact event contract.
+    if (type && !/\.(delta|added|start|stop)$/.test(type)) {
+      console.debug("[VoiceLive event]", type, e);
     }
   };
 
   const startAvatar = () => {
     setError("");
     if (!config.voicelive_configured) {
-      setStatus("error");
-      pushMessage("assistant", "Azure Voice Live isn't configured yet. Add VOICELIVE_ENDPOINT, FOUNDRY_PROJECT_NAME, the agent name/id + version and Azure credentials in the backend .env.");
-      return;
+      // Not a hard stop: the backend may be configured even if this flag lags.
+      pushMessage("assistant", "Connecting to Azure Voice Live… if this stalls, check the backend Voice Live / Foundry agent env vars.");
     }
     setStatus("connecting");
-    const ws = new WebSocket(VOICE_WS);
+    negotiatedRef.current = false;
+    let ws;
+    try {
+      ws = new WebSocket(VOICE_WS);
+    } catch (e) {
+      setStatus("error");
+      setError("Could not open the voice connection.");
+      return;
+    }
     wsRef.current = ws;
     ws.onopen = () => ws.send(JSON.stringify({ type: "start", auto_turn: autoTurnRef.current }));
     ws.onmessage = (evt) => handleServerEvent(evt.data);
@@ -200,6 +243,7 @@ export const LisaAvatar = () => {
     wsRef.current = null;
     pcRef.current = null;
     micRef.current = null;
+    negotiatedRef.current = false;
     if (videoRef.current) videoRef.current.srcObject = null;
     if (audioRef.current) audioRef.current.srcObject = null;
     setStatus("idle");
