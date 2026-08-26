@@ -1,0 +1,27 @@
+{
+  "summary": "Iteration 8: Frontend-only verification of the LisaAvatar voice-handler fix. Verified (1) unconfigured graceful path - toggling lisa-power-switch on shows 'Azure Voice Live isn't configured yet...' pre-check message, app does not crash, mic does not hang; (2) command pipeline via lisa-text-input+lisa-send-btn and hint chips works end-to-end for all specified commands - 'show delivered orders' (186), 'high priority paid orders' (216), 'find order ORD-100200' (1), 'electronics in stock' auto-navigates to item-search-page and filters (198), 'read the top order' reads top row ('Order ORD-100200 for James Miller...'), 'go to Items Search' and 'navigate to order search' navigate, 'next page'/'previous page' paginate, 'reset filters' restores 1,000; (3) hint chip lisa-hint-show-delivered-orders drives runCommand identically; (4) regression - nav-orders/nav-items switch pages, popup persists across navigation, lisa-close-btn returns to FAB; (5) code inspection confirms VOICE_WS = REACT_APP_BACKEND_URL with http->ws + '/api/voice/ws', ws.onopen sends {type:'start', auto_turn}, handleServerEvent captures transcripts via input_audio_transcription.*(completed|done), input_audio_buffer.committed, conversation.item.created, and calls runCommand; setupWebRTC sets pc.ondatachannel to route events; server_sdp triggers setRemoteDescription; negotiatedRef prevents double negotiation.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/backend_test.py"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "startAvatar() short-circuits with a pre-check before opening the WebSocket when config.voicelive_configured is false. Consequence: NO WS handshake to /api/voice/ws is attempted in the current (unconfigured) environment - only the pre-check message surfaces. The review request's 'confirm a WebSocket connection attempt is made' cannot be verified here without Azure config; both allowed outcomes (pre-check OR broker error) are covered, and pre-check is what fires. This is expected behavior per code.",
+    "WS URL construction is correct: (REACT_APP_BACKEND_URL).replace(/^http/, 'ws') + '/api/voice/ws' yields wss://<host>/api/voice/ws on https origin.",
+    "handleServerEvent robustly parses transcripts from multiple event variants (regex on input_audio_transcription.*(completed|done), input_audio_buffer.committed, conversation.item.created) and safely routes assistant transcripts too; unknown events logged via console.debug - good diagnosability.",
+    "pc.ondatachannel wired so Voice Live data-channel events flow through the same handler as WS events - correct.",
+    "server_sdp branch decodes base64 JSON then setRemoteDescription; wrapped in try/catch with clear error state.",
+    "negotiatedRef prevents double negotiation on repeat session.updated/created events - good.",
+    "onSendText forwards typed text to the agent via conversation.item.create + response.create only when ws is open (readyState===1), then always runs local UI command - correct dual-path.",
+    "Minor: order-status-select is a Radix Select trigger (button), not a native <select>; tests must not use input_value on it (adjust in future scripts)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "skipped", "frontend": "100%"},
+  "seed_data_creation": "Existing 1000 orders + 1000 items seed used; no changes.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Frontend voice-command pipeline (runCommand) verified working via text input and hint chips on both pages. Unconfigured graceful path verified. Real mic->transcript path requires Azure Voice Live keys - NOT testable in this env. If Azure is later configured, re-run and confirm the WS to /api/voice/ws opens (page.on('websocket')) and that input_audio_transcription.completed events trigger runCommand."
+}
