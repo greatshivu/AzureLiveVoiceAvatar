@@ -1,0 +1,37 @@
+{
+  "summary": "Iter 5: Verified two bug fixes -- (1) WebRTC transceivers use recvonly (both video and audio) in LisaAvatar.jsx, and (2) Foundry integration is migrated to the NEW Azure AI Foundry agent API: create-run body sends {'agent_id': FOUNDRY_AGENT_ID} (no 'assistant_id' anywhere), foundry_base() returns f'{FOUNDRY_ENDPOINT}/api/projects/{FOUNDRY_PROJECT}', and legacy FOUNDRY_PROJECT_ENDPOINT is removed. Env reads for FOUNDRY_ENDPOINT/FOUNDRY_PROJECT/FOUNDRY_AGENT_ID/FOUNDRY_AGENT_VERSION/FOUNDRY_API_KEY confirmed. Backend pytest: 15/15 pass (config unconfigured -> 503 on /avatar/chat and /avatar/credentials, orders+items search regression intact with total=1000 & filters). Frontend: Lisa popup opens with all expected testids, 'show delivered orders' filters to 186, 'go to Items Search' navigates to /items, 'read the top order' reads Order ORD-100170 correctly, 'what is the weather' returns graceful Foundry-503 message ('The Foundry agent isn't configured yet...'), 'reset filters' restores 1,000 records. No crashes. Live avatar video path cannot be end-to-end tested (Azure Speech intentionally unconfigured) but recvonly transceivers verified by code inspection.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "code_inspection_verified": {
+    "server.py_agent_id_used": true,
+    "server.py_no_assistant_id_or_legacy_var": true,
+    "server.py_foundry_base_shape": "f'{FOUNDRY_ENDPOINT}/api/projects/{FOUNDRY_PROJECT}'",
+    "server.py_foundry_env_vars_read": ["FOUNDRY_ENDPOINT","FOUNDRY_PROJECT","FOUNDRY_AGENT_ID","FOUNDRY_AGENT_VERSION","FOUNDRY_API_KEY"],
+    "LisaAvatar.jsx_video_recvonly": true,
+    "LisaAvatar.jsx_audio_recvonly": true,
+    "LisaAvatar.jsx_no_sendrecv": true,
+    "LisaAvatar.jsx_ontrack_attaches_video_and_audio": true
+  },
+  "backend_pytest": {"passed": 15, "failed": 0, "junit_xml": "/app/test_reports/pytest/pytest_results.xml"},
+  "frontend_flows_verified": [
+    "lisa-toggle-fab opens lisa-popup",
+    "popup contains lisa-video, lisa-transcript, lisa-text-input, lisa-send-btn, lisa-hints, lisa-autointerrupt-checkbox",
+    "'show delivered orders' -> 186 matching orders",
+    "'go to Items Search' navigates to item-search-page",
+    "'read the top order' -> 'Order ORD-100170 for James Smith. Status Delivered, High priority, paid. Amount 4727 dollars, region Europe.'",
+    "'what is the weather' -> graceful 'The Foundry agent isn't configured yet...' (503 from new agent_id path, no crash)",
+    "'reset filters' -> 'Cleared all filters on Order Search. That's 1,000 matching orders.'"
+  ],
+  "test_report_links": ["/app/backend/tests/backend_test.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "backend/tests/backend_test.py line 6 contains a hardcoded fallback URL as second arg to os.environ.get -- system prompt asks to avoid defaults. Non-blocking as REACT_APP_BACKEND_URL is set, but ideally remove the default so missing config fails fast.",
+    "LisaAvatar.jsx video element sets muted; audio track is delivered on a separate <audio> element (correct). Since <video> is muted and audio is separate, this is intentional and works. Just noting for future reviewers."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (15/15)", "frontend": "100%"},
+  "seed_data_creation": "None (existing 1,000 orders + 1,000 items).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Two bug fixes verified. Live Azure paths (Speech token relay, real Foundry agent run) cannot be exercised here because Azure creds are intentionally empty; when the user configures FOUNDRY_ENDPOINT/PROJECT/AGENT_ID + FOUNDRY_API_KEY (or AAD triplet), the create-run path will POST agent_id to {ENDPOINT}/api/projects/{PROJECT}/threads/{tid}/runs?api-version=v1. Same for WebRTC recvonly -- correctness of the fix is code-level; a real Azure Speech key is required to see video on screen."
+}

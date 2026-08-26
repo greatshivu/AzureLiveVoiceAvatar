@@ -1,58 +1,112 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Query
+from fastapi import FastAPI, APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
+from azure.ai.voicelive.aio import connect, AgentSessionConfig
+from azure.identity.aio import ClientSecretCredential
 import os
+import json
 import asyncio
 import logging
 import random
 from pathlib import Path
-from pydantic import BaseModel
-from typing import List, Optional
+from typing import Optional
 from datetime import datetime, timezone, timedelta
+from urllib.parse import urlencode
 
-import httpx
+import websockets
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# MongoDB connection
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-app = FastAPI(title="Enterprise Search + Lisa Avatar")
+app = FastAPI(title="Enterprise Search + Lisa (Azure Voice Live)")
 api_router = APIRouter(prefix="/api")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # ----------------------------------------------------------------------------
-# Azure configuration (filled in by the user via .env)
+# Azure Voice Live + Foundry Agent configuration (user fills these in)
 # ----------------------------------------------------------------------------
-SPEECH_RESOURCE = os.environ.get('AZURE_SPEECH_RESOURCE_NAME', '').strip()
-SPEECH_REGION = os.environ.get('AZURE_SPEECH_REGION', '').strip()
-SPEECH_KEY = os.environ.get('AZURE_SPEECH_KEY', '').strip()
+VOICELIVE_ENDPOINT = os.environ.get('VOICELIVE_ENDPOINT', '').strip().rstrip('/')  # https://<res>.services.ai.azure.com
+VOICELIVE_API_VERSION = os.environ.get('VOICELIVE_API_VERSION', '2026-04-10').strip() or '2026-04-10'
+VOICELIVE_API_KEY = os.environ.get('VOICELIVE_API_KEY', '').strip()
+
+FOUNDRY_PROJECT_NAME = os.environ.get('FOUNDRY_PROJECT_NAME', '').strip()
+FOUNDRY_AGENT_NAME = os.environ.get('FOUNDRY_AGENT_NAME', '').strip()
+FOUNDRY_AGENT_VERSION = os.environ.get('FOUNDRY_AGENT_VERSION', '').strip()
+
+credential = ClientSecretCredential(
+    tenant_id=os.environ["AZURE_TENANT_ID"],
+    client_id=os.environ["AZURE_CLIENT_ID"],
+    client_secret=os.environ["AZURE_CLIENT_SECRET"],
+)
+
+agent_config: AgentSessionConfig = {
+    "agent_name": FOUNDRY_AGENT_NAME,
+    "project_name": FOUNDRY_PROJECT_NAME,
+}
+if FOUNDRY_AGENT_VERSION:
+    agent_config["agent_version"] = FOUNDRY_AGENT_VERSION
+
 AVATAR_CHARACTER = os.environ.get('AZURE_AVATAR_CHARACTER', 'lisa').strip() or 'lisa'
 AVATAR_STYLE = os.environ.get('AZURE_AVATAR_STYLE', 'casual-sitting').strip() or 'casual-sitting'
-TTS_VOICE = os.environ.get('AZURE_TTS_VOICE', 'en-US-JennyNeural').strip() or 'en-US-JennyNeural'
-
-FOUNDRY_ENDPOINT = os.environ.get('FOUNDRY_PROJECT_ENDPOINT', '').strip().rstrip('/')
-FOUNDRY_AGENT_ID = os.environ.get('FOUNDRY_AGENT_ID', '').strip()
-FOUNDRY_API_KEY = os.environ.get('FOUNDRY_API_KEY', '').strip()
-
-_aad_token_cache = {"token": None, "expires_at": 0}
+TTS_VOICE = os.environ.get('AZURE_TTS_VOICE', 'en-US-AvaNeural').strip() or 'en-US-AvaNeural'
 
 
-def speech_configured() -> bool:
-    return bool(SPEECH_RESOURCE and SPEECH_REGION and SPEECH_KEY)
-
-
-def foundry_configured() -> bool:
-    has_auth = bool(FOUNDRY_API_KEY) or bool(
+def voicelive_configured() -> bool:
+    has_auth = bool(VOICELIVE_API_KEY) or bool(
         os.environ.get('AZURE_TENANT_ID') and os.environ.get('AZURE_CLIENT_ID') and os.environ.get('AZURE_CLIENT_SECRET')
     )
-    return bool(FOUNDRY_ENDPOINT and FOUNDRY_AGENT_ID) and has_auth
+    has_agent = bool(FOUNDRY_PROJECT_NAME and (FOUNDRY_AGENT_NAME))
+    return bool(VOICELIVE_ENDPOINT and has_agent and has_auth)
+
+
+async def _entra_token() -> str:
+    def _get():
+        from azure.identity import ClientSecretCredential, DefaultAzureCredential
+        t, c, s = os.environ.get('AZURE_TENANT_ID'), os.environ.get('AZURE_CLIENT_ID'), os.environ.get('AZURE_CLIENT_SECRET')
+        cred = ClientSecretCredential(t, c, s) if (t and c and s) else DefaultAzureCredential()
+        return cred.get_token("https://ai.azure.com/.default").token
+    return await asyncio.to_thread(_get)
+
+
+def _voicelive_url() -> str:
+    base = VOICELIVE_ENDPOINT.replace('https://', 'wss://').replace('http://', 'ws://')
+    params = {"api-version": VOICELIVE_API_VERSION}
+    if FOUNDRY_PROJECT_NAME:
+        params["agent-project-name"] = FOUNDRY_PROJECT_NAME
+    if FOUNDRY_AGENT_NAME:
+        params["agent-name"] = FOUNDRY_AGENT_NAME
+    if FOUNDRY_AGENT_VERSION:
+        params["agent-version"] = FOUNDRY_AGENT_VERSION
+    return f"{base}/voice-live/realtime?{urlencode(params)}"
+
+
+def _session_update(auto_turn: bool = True) -> dict:
+    session = {
+        "modalities": ["text", "audio"],
+        "voice": {"type": "azure-standard", "name": TTS_VOICE},
+        "input_audio_format": "pcm16",
+        "output_audio_format": "pcm16",
+        "input_audio_transcription": {"model": "azure-speech", "language": "en-US"},
+        "avatar": {
+            "character": AVATAR_CHARACTER,
+            "style": AVATAR_STYLE,
+            "customized": False,
+            "output_protocol": "webrtc",
+            "video": {"codec": "h264", "bitrate": 2000000, "resolution": {"width": 1920, "height": 1080}},
+        },
+        "turn_detection": (
+            {"type": "server_vad", "threshold": 0.5, "prefix_padding_ms": 300, "silence_duration_ms": 500}
+            if auto_turn else None
+        ),
+    }
+    return {"type": "session.update", "session": session}
 
 
 # ----------------------------------------------------------------------------
@@ -80,17 +134,13 @@ ITEM_NOUN = {
 
 
 def _rand_date_within_days(days: int) -> datetime:
-    delta = random.randint(0, days)
-    secs = random.randint(0, 86399)
-    return datetime.now(timezone.utc) - timedelta(days=delta, seconds=secs)
+    return datetime.now(timezone.utc) - timedelta(days=random.randint(0, days), seconds=random.randint(0, 86399))
 
 
 async def seed_data():
-    orders_count = await db.orders.count_documents({})
-    if orders_count == 0:
+    if await db.orders.count_documents({}) == 0:
         orders = []
         for i in range(1, 1001):
-            d = _rand_date_within_days(365)
             orders.append({
                 "id": f"ord_{i:05d}",
                 "order_number": f"ORD-{100000 + i}",
@@ -101,48 +151,44 @@ async def seed_data():
                 "is_paid": random.random() > 0.4,
                 "amount": round(random.uniform(20, 5000), 2),
                 "items_count": random.randint(1, 12),
-                "order_date": d.isoformat(),
+                "order_date": _rand_date_within_days(365).isoformat(),
             })
         await db.orders.insert_many(orders)
         logger.info("Seeded 1000 orders")
 
-    items_count = await db.items.count_documents({})
-    if items_count == 0:
+    if await db.items.count_documents({}) == 0:
         items = []
         for i in range(1, 1001):
             cat = random.choice(ITEM_CATEGORIES)
-            name = f"{random.choice(ITEM_ADJ)} {random.choice(ITEM_NOUN[cat])}"
             stock = random.randint(0, 500)
-            d = _rand_date_within_days(365)
             items.append({
                 "id": f"itm_{i:05d}",
                 "sku": f"SKU-{200000 + i}",
-                "name": name,
+                "name": f"{random.choice(ITEM_ADJ)} {random.choice(ITEM_NOUN[cat])}",
                 "category": cat,
                 "condition": random.choice(ITEM_CONDITIONS),
                 "in_stock": stock > 0,
                 "stock": stock,
                 "price": round(random.uniform(5, 1500), 2),
                 "supplier": random.choice(SUPPLIERS),
-                "added_date": d.isoformat(),
+                "added_date": _rand_date_within_days(365).isoformat(),
             })
         await db.items.insert_many(items)
         logger.info("Seeded 1000 items")
 
 
-# ----------------------------------------------------------------------------
-# Search endpoints
-# ----------------------------------------------------------------------------
 def _date_filter(field: str, date_from: Optional[str], date_to: Optional[str]):
     cond = {}
     if date_from:
         cond["$gte"] = date_from
     if date_to:
-        # include the whole 'to' day
         cond["$lte"] = date_to + "T23:59:59.999999+00:00" if len(date_to) == 10 else date_to
     return {field: cond} if cond else {}
 
 
+# ----------------------------------------------------------------------------
+# REST endpoints
+# ----------------------------------------------------------------------------
 @api_router.get("/")
 async def root():
     return {"message": "Enterprise Search API"}
@@ -151,8 +197,7 @@ async def root():
 @api_router.get("/config")
 async def get_config():
     return {
-        "speech_configured": speech_configured(),
-        "foundry_configured": foundry_configured(),
+        "voicelive_configured": voicelive_configured(),
         "avatar_character": AVATAR_CHARACTER,
         "avatar_style": AVATAR_STYLE,
     }
@@ -160,21 +205,13 @@ async def get_config():
 
 @api_router.get("/orders/search")
 async def search_orders(
-    q: Optional[str] = None,
-    status: Optional[str] = None,
-    priority: Optional[str] = None,
-    paid_only: bool = False,
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None,
-    page: int = Query(1, ge=1),
-    page_size: int = Query(10, ge=1, le=100),
+    q: Optional[str] = None, status: Optional[str] = None, priority: Optional[str] = None,
+    paid_only: bool = False, date_from: Optional[str] = None, date_to: Optional[str] = None,
+    page: int = Query(1, ge=1), page_size: int = Query(10, ge=1, le=100),
 ):
     query = {}
     if q:
-        query["$or"] = [
-            {"order_number": {"$regex": q, "$options": "i"}},
-            {"customer_name": {"$regex": q, "$options": "i"}},
-        ]
+        query["$or"] = [{"order_number": {"$regex": q, "$options": "i"}}, {"customer_name": {"$regex": q, "$options": "i"}}]
     if status and status != "all":
         query["status"] = status
     if priority and priority != "all":
@@ -182,36 +219,20 @@ async def search_orders(
     if paid_only:
         query["is_paid"] = True
     query.update(_date_filter("order_date", date_from, date_to))
-
     total = await db.orders.count_documents(query)
-    cursor = db.orders.find(query, {"_id": 0}).sort("order_date", -1).skip((page - 1) * page_size).limit(page_size)
-    results = await cursor.to_list(page_size)
-    return {
-        "results": results,
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-        "total_pages": max(1, (total + page_size - 1) // page_size),
-    }
+    results = await db.orders.find(query, {"_id": 0}).sort("order_date", -1).skip((page - 1) * page_size).limit(page_size).to_list(page_size)
+    return {"results": results, "total": total, "page": page, "page_size": page_size, "total_pages": max(1, (total + page_size - 1) // page_size)}
 
 
 @api_router.get("/items/search")
 async def search_items(
-    q: Optional[str] = None,
-    category: Optional[str] = None,
-    condition: Optional[str] = None,
-    in_stock_only: bool = False,
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None,
-    page: int = Query(1, ge=1),
-    page_size: int = Query(10, ge=1, le=100),
+    q: Optional[str] = None, category: Optional[str] = None, condition: Optional[str] = None,
+    in_stock_only: bool = False, date_from: Optional[str] = None, date_to: Optional[str] = None,
+    page: int = Query(1, ge=1), page_size: int = Query(10, ge=1, le=100),
 ):
     query = {}
     if q:
-        query["$or"] = [
-            {"name": {"$regex": q, "$options": "i"}},
-            {"sku": {"$regex": q, "$options": "i"}},
-        ]
+        query["$or"] = [{"name": {"$regex": q, "$options": "i"}}, {"sku": {"$regex": q, "$options": "i"}}]
     if category and category != "all":
         query["category"] = category
     if condition and condition != "all":
@@ -219,146 +240,158 @@ async def search_items(
     if in_stock_only:
         query["in_stock"] = True
     query.update(_date_filter("added_date", date_from, date_to))
-
     total = await db.items.count_documents(query)
-    cursor = db.items.find(query, {"_id": 0}).sort("added_date", -1).skip((page - 1) * page_size).limit(page_size)
-    results = await cursor.to_list(page_size)
-    return {
-        "results": results,
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-        "total_pages": max(1, (total + page_size - 1) // page_size),
-    }
+    results = await db.items.find(query, {"_id": 0}).sort("added_date", -1).skip((page - 1) * page_size).limit(page_size).to_list(page_size)
+    return {"results": results, "total": total, "page": page, "page_size": page_size, "total_pages": max(1, (total + page_size - 1) // page_size)}
 
 
 # ----------------------------------------------------------------------------
-# Azure avatar: token relay
+# Azure Voice Live broker: relays the browser <-> Voice Live realtime socket.
+# Browser sends {"type":"start", "auto_turn": bool}; the server injects the
+# avatar session.update and forwards everything else (incl. session.avatar.connect
+# SDP signaling) transparently.
 # ----------------------------------------------------------------------------
-@api_router.get("/avatar/credentials")
-async def avatar_credentials():
-    if not speech_configured():
-        raise HTTPException(503, "Azure Speech is not configured. Set AZURE_SPEECH_* env vars.")
-    base = f"https://{SPEECH_RESOURCE}.cognitiveservices.azure.com"
-    token_url = f"{base}/sts/v1.0/issueToken"
-    ice_url = f"{base}/tts/cognitiveservices/avatar/relay/token/v1"
-    headers = {"Ocp-Apim-Subscription-Key": SPEECH_KEY}
-    async with httpx.AsyncClient(timeout=15) as hc:
-        token_resp, ice_resp = await asyncio.gather(
-            hc.post(token_url, headers={**headers, "Content-Type": "application/x-www-form-urlencoded"}),
-            hc.get(ice_url, headers=headers),
-        )
-    if token_resp.status_code != 200:
-        raise HTTPException(502, f"Speech token request failed ({token_resp.status_code})")
-    if ice_resp.status_code != 200:
-        raise HTTPException(502, f"Avatar ICE request failed ({ice_resp.status_code})")
-    return {
-        "speech_token": token_resp.text,
-        "speech_region": SPEECH_REGION,
-        "ice": ice_resp.json(),
-        "avatar_character": AVATAR_CHARACTER,
-        "avatar_style": AVATAR_STYLE,
-        "tts_voice": TTS_VOICE,
-        "expires_in_seconds": 540,
-    }
+@api_router.websocket("/voice/ws")
+async def voice_ws(ws: WebSocket):
+    await ws.accept()
+    if not voicelive_configured():
+        await ws.send_text(json.dumps({"type": "error", "error": {
+            "message": "Voice Live is not configured. Set VOICELIVE_ENDPOINT, FOUNDRY_PROJECT_NAME, "
+                       "FOUNDRY_AGENT_NAME (and FOUNDRY_AGENT_VERSION), plus Azure "
+                       "service-principal credentials, in backend/.env."}}))
+        await ws.close()
+        return
 
+    try:
+        htoken = await _entra_token()
+        headers = {
+            "Authorization": f"Bearer {htoken}"
+        }
 
-# ----------------------------------------------------------------------------
-# Azure AI Foundry agent proxy
-# ----------------------------------------------------------------------------
-async def _foundry_headers() -> dict:
-    if FOUNDRY_API_KEY:
-        return {"api-key": FOUNDRY_API_KEY, "Content-Type": "application/json"}
-    now = datetime.now(timezone.utc).timestamp()
-    if _aad_token_cache["token"] and _aad_token_cache["expires_at"] - 60 > now:
-        token = _aad_token_cache["token"]
-    else:
-        from azure.identity import ClientSecretCredential, DefaultAzureCredential
-        tenant = os.environ.get('AZURE_TENANT_ID')
-        cid = os.environ.get('AZURE_CLIENT_ID')
-        secret = os.environ.get('AZURE_CLIENT_SECRET')
-        if tenant and cid and secret:
-            cred = ClientSecretCredential(tenant, cid, secret)
-        else:
-            cred = DefaultAzureCredential()
-        access = cred.get_token("https://ai.azure.com/.default")
-        token = access.token
-        _aad_token_cache["token"] = token
-        _aad_token_cache["expires_at"] = access.expires_on
-    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        #async with websockets.connect(
+        #    _voicelive_url(), additional_headers=headers, subprotocols=["realtime"],
+        #    max_size=None, ping_interval=20, ping_timeout=20,
+        #) as azure:
+        async with connect(
+            endpoint=VOICELIVE_ENDPOINT,
+            credential=credential,
+            agent_config=agent_config,
+        ) as azure:
 
+            #async def browser_to_azure():
+            #    while True:
+            #        raw = await ws.receive_text()
+            #        try:
+            #            data = json.loads(raw)
+            #        except Exception:
+            #            continue
+            #        if data.get("type") == "start":
+            #            data = _session_update(bool(data.get("auto_turn", True)))
+            #        await azure.send(json.dumps(data))
+            async def browser_to_azure():
+                while True:
+                    raw = await ws.receive_text()
 
-async def _foundry(hc: httpx.AsyncClient, method: str, path: str, body: Optional[dict] = None) -> dict:
-    url = f"{FOUNDRY_ENDPOINT}/{path.lstrip('/')}"
-    headers = await _foundry_headers()
-    resp = await hc.request(method, url, headers=headers, json=body)
-    if resp.status_code >= 400:
-        raise HTTPException(502, f"Foundry error {resp.status_code}: {resp.text[:400]}")
-    return resp.json()
+                    try:
+                        data = json.loads(raw)
+                    except json.JSONDecodeError:
+                        logger.warning("Invalid JSON from browser: %s", raw[:500])
+                        continue
 
+                    if data.get("type") == "start":
+                        data = _session_update(
+                            bool(data.get("auto_turn", True))
+                        )
 
-def _extract_assistant_text(payload: dict) -> str:
-    for msg in payload.get("data", []):
-        if msg.get("role") != "assistant":
-            continue
-        for item in msg.get("content", []):
-            text = item.get("text")
-            if isinstance(text, dict) and text.get("value"):
-                return text["value"]
-            if isinstance(text, str) and text:
-                return text
-    return ""
+                    logger.info(
+                        "Browser -> Voice Live: type=%s",
+                        data.get("type")
+                    )
 
+                    await azure.send(data)
 
-class ChatRequest(BaseModel):
-    text: str
-    thread_id: Optional[str] = None
+            #async def azure_to_browser():
+            #    async for raw in azure:
+            #        await ws.send_text(raw if isinstance(raw, str) else raw.decode("utf-8", "ignore"))
+            async def azure_to_browser():
+                async for event in azure:
+                    logger.info(
+                        "Voice Live event: type=%s class=%s",
+                        getattr(event, "type", None),
+                        type(event).__name__,
+                    )
+                    if type(event).__name__ == "ServerEventError":
+                        logger.error("========== VOICE LIVE ERROR ==========")
+                        logger.error("event repr: %r", event)
+                        logger.error("event str: %s", event)
+                        logger.error("event dict: %s", getattr(event, "__dict__", None))
+                        logger.error("event type: %s", getattr(event, "type", None))
+                        logger.error("error: %s", getattr(event, "error", None))
+                        logger.error("code: %s", getattr(event, "code", None))
+                        logger.error("message: %s", getattr(event, "message", None))
+                        logger.error("param: %s", getattr(event, "param", None))
+                        logger.error("======================================")
 
+                    try:
+                        if isinstance(event, str):
+                            payload = event
 
-@api_router.post("/avatar/chat")
-async def avatar_chat(req: ChatRequest):
-    if not foundry_configured():
-        raise HTTPException(503, "Azure AI Foundry agent is not configured. Set FOUNDRY_* env vars.")
-    text = (req.text or "").strip()
-    if not text:
-        raise HTTPException(400, "text is required")
-    if len(text) > 4000:
-        raise HTTPException(400, "text too long")
+                        elif isinstance(event, bytes):
+                            payload = event.decode("utf-8", "ignore")
 
-    async with httpx.AsyncClient(timeout=60) as hc:
-        thread_id = req.thread_id
-        if not thread_id:
-            thread = await _foundry(hc, "POST", "threads?api-version=v1", {})
-            thread_id = thread["id"]
+                        elif hasattr(event, "model_dump"):
+                            payload = json.dumps(
+                                event.model_dump(mode="json"),
+                                default=str
+                            )
 
-        await _foundry(hc, "POST", f"threads/{thread_id}/messages?api-version=v1",
-                       {"role": "user", "content": text})
-        run = await _foundry(hc, "POST", f"threads/{thread_id}/runs?api-version=v1",
-                             {"assistant_id": FOUNDRY_AGENT_ID})
+                        elif hasattr(event, "as_dict"):
+                            payload = json.dumps(
+                                event.as_dict(),
+                                default=str
+                            )
 
-        for _ in range(60):
-            status = await _foundry(hc, "GET", f"threads/{thread_id}/runs/{run['id']}?api-version=v1")
-            state = status.get("status")
-            if state == "completed":
-                break
-            if state in {"failed", "cancelled", "expired", "requires_action"}:
-                raise HTTPException(502, f"Agent run {state}")
-            await asyncio.sleep(1)
-        else:
-            raise HTTPException(504, "Agent run timed out")
+                        elif hasattr(event, "to_dict"):
+                            payload = json.dumps(
+                                event.to_dict(),
+                                default=str
+                            )
 
-        messages = await _foundry(hc, "GET", f"threads/{thread_id}/messages?api-version=v1&order=desc&limit=5")
-        answer = _extract_assistant_text(messages)
+                        else:
+                            payload = json.dumps(
+                                {
+                                    "type": getattr(
+                                        event,
+                                        "type",
+                                        type(event).__name__
+                                    ),
+                                    "event": str(event),
+                                }
+                            )
 
-    if not answer:
-        answer = "I'm sorry, I couldn't generate a response."
-    await db.conversations.insert_one({
-        "thread_id": thread_id,
-        "user_text": text,
-        "assistant_text": answer,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    })
-    return {"thread_id": thread_id, "text": answer}
+                        await ws.send_text(payload)
+
+                    except Exception:
+                        logger.exception(
+                            "Failed to forward Voice Live event: %r",
+                            event,
+                        )
+
+            await asyncio.gather(browser_to_azure(), azure_to_browser())
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.error("voice_ws error: %s", e)
+        try:
+            await ws.send_text(json.dumps({"type": "error", "error": {"message": str(e)[:300]}}))
+        except Exception:
+            pass
+    finally:
+        try:
+            await ws.close()
+        except Exception:
+            pass
 
 
 app.include_router(api_router)

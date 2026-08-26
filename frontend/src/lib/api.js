@@ -5,13 +5,8 @@ export const API = `${BACKEND_URL}/api`;
 
 export const api = axios.create({ baseURL: API });
 
-export const searchOrders = async (params) => {
-  const { data } = await api.get("/orders/search", { params });
-  return data;
-};
-
-export const searchItems = async (params) => {
-  const { data } = await api.get("/items/search", { params });
+export const search = async (endpoint, params) => {
+  const { data } = await api.get(endpoint, { params });
   return data;
 };
 

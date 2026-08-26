@@ -47,11 +47,12 @@ const columns = [
 export default function ItemsSearch() {
   const { filters, set, page, data, loading, onSearch, onReset, onPage } = useSearch(
     searchItems,
-    buildExtra
+    buildExtra,
+    "items"
   );
 
   return (
-    <div data-testid="items-search-page" className="p-6 md:p-8 lg:p-10 max-w-7xl mx-auto w-full">
+    <div data-testid="items-search-page" className="p-6 md:p-8 lg:p-10 pb-28 max-w-7xl mx-auto w-full">
       <div className="mb-6">
         <h1 className="font-heading text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">
           Items Search

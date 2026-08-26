@@ -1,66 +1,132 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { format } from "date-fns";
+import { registerSearchHandler, publishResults } from "./voiceBus";
+import { search as apiSearch } from "./api";
 
-const emptyState = {
-  search: "",
-  select: "all",
-  radio: "all",
-  checkbox: false,
-  range: undefined,
+const initialState = (controls) => {
+  const s = {};
+  controls.forEach((c) => {
+    if (c.type === "select" || c.type === "radio") s[c.id] = "all";
+    else if (c.type === "checkbox") s[c.id] = false;
+    else if (c.type === "text") s[c.id] = "";
+    else if (c.type === "daterange") s[c.id] = undefined;
+  });
+  return s;
 };
 
-export const useSearch = (fetchFn, buildExtra) => {
-  const [filters, setFilters] = useState(emptyState);
-  const applied = useRef({ ...emptyState });
-  const [page, setPage] = useState(1);
+const buildParams = (controls, state) => {
+  const params = {};
+  controls.forEach((c) => {
+    const v = state[c.id];
+    if (c.type === "select" || c.type === "radio") {
+      if (v && v !== "all") params[c.param] = v;
+    } else if (c.type === "checkbox") {
+      if (v) params[c.param] = true;
+    } else if (c.type === "text") {
+      if (v) params[c.param] = v;
+    } else if (c.type === "daterange") {
+      if (v?.from) params[c.paramFrom] = format(v.from, "yyyy-MM-dd");
+      if (v?.to) params[c.paramTo] = format(v.to, "yyyy-MM-dd");
+    }
+  });
+  return params;
+};
+
+export const useSearch = (page) => {
+  const controls = page.controls;
+  const empty = useRef(initialState(controls)).current;
+
+  const [filters, setFilters] = useState(empty);
+  const applied = useRef({ ...empty });
+  const [pageNo, setPageNo] = useState(1);
+  const pageRef = useRef(1);
   const [data, setData] = useState({ results: [], total: 0, total_pages: 1, page_size: 10 });
   const [loading, setLoading] = useState(false);
 
   const set = (key, value) => setFilters((f) => ({ ...f, [key]: value }));
 
+  useEffect(() => {
+    pageRef.current = pageNo;
+  }, [pageNo]);
+
   const run = useCallback(
     async (state, pageArg) => {
       setLoading(true);
       try {
-        const params = { page: pageArg, page_size: 10, ...buildExtra(state) };
-        if (state.range?.from) params.date_from = format(state.range.from, "yyyy-MM-dd");
-        if (state.range?.to) params.date_to = format(state.range.to, "yyyy-MM-dd");
-        if (state.search) params.q = state.search;
-        const res = await fetchFn(params);
+        const params = { page: pageArg, page_size: 10, ...buildParams(controls, state) };
+        const res = await apiSearch(page.endpoint, params);
         setData(res);
+        publishResults(page.key, res.results);
+        return res;
       } catch (e) {
         console.error("search failed", e);
-        setData({ results: [], total: 0, total_pages: 1, page_size: 10 });
+        const emptyRes = { results: [], total: 0, total_pages: 1, page_size: 10 };
+        setData(emptyRes);
+        return emptyRes;
       } finally {
         setLoading(false);
       }
     },
-    [fetchFn, buildExtra]
+    [controls, page.endpoint, page.key]
   );
 
   useEffect(() => {
-    applied.current = { ...emptyState };
-    run(emptyState, 1);
+    applied.current = { ...empty };
+    run(empty, 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const onSearch = () => {
     applied.current = { ...filters };
-    setPage(1);
+    setPageNo(1);
     run(filters, 1);
   };
 
   const onReset = () => {
-    setFilters(emptyState);
-    applied.current = { ...emptyState };
-    setPage(1);
-    run(emptyState, 1);
+    setFilters(empty);
+    applied.current = { ...empty };
+    setPageNo(1);
+    run(empty, 1);
   };
 
   const onPage = (p) => {
-    setPage(p);
+    setPageNo(p);
     run(applied.current, p);
   };
 
-  return { filters, set, page, data, loading, onSearch, onReset, onPage };
+  // Voice-command handler (Lisa) — commands are keyed by control id.
+  const applyCommand = useCallback(
+    async (cmd) => {
+      if (!cmd) return;
+      let res;
+      if (cmd.reset) {
+        setFilters(empty);
+        applied.current = { ...empty };
+        setPageNo(1);
+        res = await run(empty, 1);
+      } else if (cmd.page) {
+        const np =
+          cmd.page === "next"
+            ? pageRef.current + 1
+            : cmd.page === "prev"
+            ? Math.max(1, pageRef.current - 1)
+            : Math.max(1, cmd.page);
+        setPageNo(np);
+        res = await run(applied.current, np);
+      } else {
+        const next = { ...empty, ...(cmd.filters || {}) };
+        setFilters(next);
+        applied.current = next;
+        setPageNo(1);
+        res = await run(next, 1);
+      }
+      if (cmd.onResult) cmd.onResult(res?.total ?? 0);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [run]
+  );
+
+  useEffect(() => registerSearchHandler(page.key, applyCommand), [page.key, applyCommand]);
+
+  return { filters, set, page: pageNo, data, loading, onSearch, onReset, onPage };
 };
