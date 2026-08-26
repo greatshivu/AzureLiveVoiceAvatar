@@ -2,6 +2,8 @@ from fastapi import FastAPI, APIRouter, HTTPException, Query, WebSocket, WebSock
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
+from azure.ai.voicelive.aio import connect, AgentSessionConfig
+from azure.identity.aio import ClientSecretCredential
 import os
 import json
 import asyncio
@@ -35,9 +37,21 @@ VOICELIVE_API_VERSION = os.environ.get('VOICELIVE_API_VERSION', '2026-04-10').st
 VOICELIVE_API_KEY = os.environ.get('VOICELIVE_API_KEY', '').strip()
 
 FOUNDRY_PROJECT_NAME = os.environ.get('FOUNDRY_PROJECT_NAME', '').strip()
-FOUNDRY_AGENT_ID = os.environ.get('FOUNDRY_AGENT_ID', '').strip()
 FOUNDRY_AGENT_NAME = os.environ.get('FOUNDRY_AGENT_NAME', '').strip()
 FOUNDRY_AGENT_VERSION = os.environ.get('FOUNDRY_AGENT_VERSION', '').strip()
+
+credential = ClientSecretCredential(
+    tenant_id=os.environ["AZURE_TENANT_ID"],
+    client_id=os.environ["AZURE_CLIENT_ID"],
+    client_secret=os.environ["AZURE_CLIENT_SECRET"],
+)
+
+agent_config: AgentSessionConfig = {
+    "agent_name": FOUNDRY_AGENT_NAME,
+    "project_name": FOUNDRY_PROJECT_NAME,
+}
+if FOUNDRY_AGENT_VERSION:
+    agent_config["agent_version"] = FOUNDRY_AGENT_VERSION
 
 AVATAR_CHARACTER = os.environ.get('AZURE_AVATAR_CHARACTER', 'lisa').strip() or 'lisa'
 AVATAR_STYLE = os.environ.get('AZURE_AVATAR_STYLE', 'casual-sitting').strip() or 'casual-sitting'
@@ -48,7 +62,7 @@ def voicelive_configured() -> bool:
     has_auth = bool(VOICELIVE_API_KEY) or bool(
         os.environ.get('AZURE_TENANT_ID') and os.environ.get('AZURE_CLIENT_ID') and os.environ.get('AZURE_CLIENT_SECRET')
     )
-    has_agent = bool(FOUNDRY_PROJECT_NAME and (FOUNDRY_AGENT_ID or FOUNDRY_AGENT_NAME))
+    has_agent = bool(FOUNDRY_PROJECT_NAME and (FOUNDRY_AGENT_NAME))
     return bool(VOICELIVE_ENDPOINT and has_agent and has_auth)
 
 
@@ -66,8 +80,6 @@ def _voicelive_url() -> str:
     params = {"api-version": VOICELIVE_API_VERSION}
     if FOUNDRY_PROJECT_NAME:
         params["agent-project-name"] = FOUNDRY_PROJECT_NAME
-    if FOUNDRY_AGENT_ID:
-        params["agent-id"] = FOUNDRY_AGENT_ID
     if FOUNDRY_AGENT_NAME:
         params["agent-name"] = FOUNDRY_AGENT_NAME
     if FOUNDRY_AGENT_VERSION:
@@ -87,7 +99,7 @@ def _session_update(auto_turn: bool = True) -> dict:
             "style": AVATAR_STYLE,
             "customized": False,
             "output_protocol": "webrtc",
-            "video": {"codec": "h264", "bitrate": 2000000, "resolution": {"width": 1080, "height": 1920}},
+            "video": {"codec": "h264", "bitrate": 2000000, "resolution": {"width": 1920, "height": 1080}},
         },
         "turn_detection": (
             {"type": "server_vad", "threshold": 0.5, "prefix_padding_ms": 300, "silence_duration_ms": 500}
@@ -245,37 +257,125 @@ async def voice_ws(ws: WebSocket):
     if not voicelive_configured():
         await ws.send_text(json.dumps({"type": "error", "error": {
             "message": "Voice Live is not configured. Set VOICELIVE_ENDPOINT, FOUNDRY_PROJECT_NAME, "
-                       "FOUNDRY_AGENT_ID or FOUNDRY_AGENT_NAME (and FOUNDRY_AGENT_VERSION), plus Azure "
+                       "FOUNDRY_AGENT_NAME (and FOUNDRY_AGENT_VERSION), plus Azure "
                        "service-principal credentials, in backend/.env."}}))
         await ws.close()
         return
 
     try:
-        headers = {}
-        if VOICELIVE_API_KEY:
-            headers["api-key"] = VOICELIVE_API_KEY
-        else:
-            headers["Authorization"] = f"Bearer {await _entra_token()}"
+        htoken = await _entra_token()
+        headers = {
+            "Authorization": f"Bearer {htoken}"
+        }
 
-        async with websockets.connect(
-            _voicelive_url(), additional_headers=headers, subprotocols=["realtime"],
-            max_size=None, ping_interval=20, ping_timeout=20,
+        #async with websockets.connect(
+        #    _voicelive_url(), additional_headers=headers, subprotocols=["realtime"],
+        #    max_size=None, ping_interval=20, ping_timeout=20,
+        #) as azure:
+        async with connect(
+            endpoint=VOICELIVE_ENDPOINT,
+            credential=credential,
+            agent_config=agent_config,
         ) as azure:
 
+            #async def browser_to_azure():
+            #    while True:
+            #        raw = await ws.receive_text()
+            #        try:
+            #            data = json.loads(raw)
+            #        except Exception:
+            #            continue
+            #        if data.get("type") == "start":
+            #            data = _session_update(bool(data.get("auto_turn", True)))
+            #        await azure.send(json.dumps(data))
             async def browser_to_azure():
                 while True:
                     raw = await ws.receive_text()
+
                     try:
                         data = json.loads(raw)
-                    except Exception:
+                    except json.JSONDecodeError:
+                        logger.warning("Invalid JSON from browser: %s", raw[:500])
                         continue
-                    if data.get("type") == "start":
-                        data = _session_update(bool(data.get("auto_turn", True)))
-                    await azure.send(json.dumps(data))
 
+                    if data.get("type") == "start":
+                        data = _session_update(
+                            bool(data.get("auto_turn", True))
+                        )
+
+                    logger.info(
+                        "Browser -> Voice Live: type=%s",
+                        data.get("type")
+                    )
+
+                    await azure.send(data)
+
+            #async def azure_to_browser():
+            #    async for raw in azure:
+            #        await ws.send_text(raw if isinstance(raw, str) else raw.decode("utf-8", "ignore"))
             async def azure_to_browser():
-                async for raw in azure:
-                    await ws.send_text(raw if isinstance(raw, str) else raw.decode("utf-8", "ignore"))
+                async for event in azure:
+                    logger.info(
+                        "Voice Live event: type=%s class=%s",
+                        getattr(event, "type", None),
+                        type(event).__name__,
+                    )
+                    if type(event).__name__ == "ServerEventError":
+                        logger.error("========== VOICE LIVE ERROR ==========")
+                        logger.error("event repr: %r", event)
+                        logger.error("event str: %s", event)
+                        logger.error("event dict: %s", getattr(event, "__dict__", None))
+                        logger.error("event type: %s", getattr(event, "type", None))
+                        logger.error("error: %s", getattr(event, "error", None))
+                        logger.error("code: %s", getattr(event, "code", None))
+                        logger.error("message: %s", getattr(event, "message", None))
+                        logger.error("param: %s", getattr(event, "param", None))
+                        logger.error("======================================")
+
+                    try:
+                        if isinstance(event, str):
+                            payload = event
+
+                        elif isinstance(event, bytes):
+                            payload = event.decode("utf-8", "ignore")
+
+                        elif hasattr(event, "model_dump"):
+                            payload = json.dumps(
+                                event.model_dump(mode="json"),
+                                default=str
+                            )
+
+                        elif hasattr(event, "as_dict"):
+                            payload = json.dumps(
+                                event.as_dict(),
+                                default=str
+                            )
+
+                        elif hasattr(event, "to_dict"):
+                            payload = json.dumps(
+                                event.to_dict(),
+                                default=str
+                            )
+
+                        else:
+                            payload = json.dumps(
+                                {
+                                    "type": getattr(
+                                        event,
+                                        "type",
+                                        type(event).__name__
+                                    ),
+                                    "event": str(event),
+                                }
+                            )
+
+                        await ws.send_text(payload)
+
+                    except Exception:
+                        logger.exception(
+                            "Failed to forward Voice Live event: %r",
+                            event,
+                        )
 
             await asyncio.gather(browser_to_azure(), azure_to_browser())
 
