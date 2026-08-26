@@ -43,3 +43,10 @@ Single Page Application with 2 pages: Order Search and Items Search, each with p
 - Generic rendering: `pages/SearchPage.jsx` + `components/DynamicFilterBar.jsx` + `lib/useSearch.js` render any page from config; `App.js` & `Navbar.jsx` generate routes/links from `PAGES`.
 - Config-driven avatar: `lib/voiceCommands.js::parseCommand` analyzes `PAGES` to detect target page (alias weight 3, control-option words weight 2), extract filters per control, and build read-out/confirmation text. Adding a page (+ its backend endpoint) auto-extends navigation, search, read-out and hints with no parser/UI changes. See `/app/ADDING_A_PAGE.md`.
 - Verified 100% (iteration_4): dynamic filters, pagination, cross-page voice auto-navigation ("electronics in stock" from /orders → /items), read-out, per-page hints.
+
+## Azure Voice Live Migration (2026-08-26)
+- Replaced the old approach (Speech-avatar SDK `AvatarSynthesizer` + classic Foundry threads/messages/runs REST) with the **Azure Voice Live API** connecting to a **Microsoft Foundry AGENT**.
+- Backend: WebSocket broker `/api/voice/ws` mints an Entra token (scope `https://ai.azure.com/.default`) or uses `VOICELIVE_API_KEY`, opens the upstream `wss://<VOICELIVE_ENDPOINT>/voice-live/realtime` with query params `api-version` + `agent-project-name` + `agent-id`/`agent-name` + `agent-version`, injects the avatar `session.update` (character lisa, `output_protocol: webrtc`), and relays browser↔Azure (incl. `session.avatar.connect` SDP).
+- Frontend: LisaAvatar uses a WebSocket + `RTCPeerConnection` (mic track + `video recvonly`), base64 SDP offer/answer per Voice Live signalling; no Speech SDK.
+- New env vars: `VOICELIVE_ENDPOINT`, `VOICELIVE_API_VERSION`, `VOICELIVE_API_KEY`, `FOUNDRY_PROJECT_NAME`, `FOUNDRY_AGENT_ID`, `FOUNDRY_AGENT_NAME`, `FOUNDRY_AGENT_VERSION` (+ AAD triplet). Removed `/api/avatar/chat` & `/api/avatar/credentials`.
+- Verified 100% (iteration_6): code migration confirmed, graceful WS error when unconfigured, search regression, config-driven command box/hints intact. Live WebRTC/agent path requires user's Azure keys (code-level verified only).
