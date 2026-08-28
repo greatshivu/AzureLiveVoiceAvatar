@@ -92,6 +92,7 @@ def _session_update(auto_turn: bool = True) -> dict:
         "modalities": ["text", "audio"],
         "voice": {"type": "azure-standard", "name": TTS_VOICE},
         "input_audio_format": "pcm16",
+        "input_audio_sampling_rate": 24000,
         "output_audio_format": "pcm16",
         "input_audio_transcription": {"model": "azure-speech", "language": "en-US"},
         "avatar": {
@@ -99,7 +100,9 @@ def _session_update(auto_turn: bool = True) -> dict:
             "style": AVATAR_STYLE,
             "customized": False,
             "output_protocol": "webrtc",
-            "video": {"codec": "h264", "bitrate": 2000000, "resolution": {"width": 1920, "height": 1080}},
+            "video": {"codec": "h264", "bitrate": 2000000, "resolution": {"width": 1920, "height": 1080} 
+                #,"crop": { "topLeft": { "x": 420, "y": 0 }, "bottomRight": { "x": 1500, "y": 1080 } }
+            },
         },
         "turn_detection": (
             {"type": "server_vad", "threshold": 0.5, "prefix_padding_ms": 300, "silence_duration_ms": 500}
@@ -251,9 +254,13 @@ async def search_items(
 # avatar session.update and forwards everything else (incl. session.avatar.connect
 # SDP signaling) transparently.
 # ----------------------------------------------------------------------------
+"""
 @api_router.websocket("/voice/ws")
 async def voice_ws(ws: WebSocket):
     await ws.accept()
+    logger.info("==========================================")
+    logger.info("Browser WebSocket connected")
+    logger.info("==========================================")
     if not voicelive_configured():
         await ws.send_text(json.dumps({"type": "error", "error": {
             "message": "Voice Live is not configured. Set VOICELIVE_ENDPOINT, FOUNDRY_PROJECT_NAME, "
@@ -261,7 +268,8 @@ async def voice_ws(ws: WebSocket):
                        "service-principal credentials, in backend/.env."}}))
         await ws.close()
         return
-
+    
+    azure = None
     try:
         htoken = await _entra_token()
         headers = {
@@ -290,36 +298,71 @@ async def voice_ws(ws: WebSocket):
             #        await azure.send(json.dumps(data))
             async def browser_to_azure():
                 while True:
-                    raw = await ws.receive_text()
+                    message = await ws.receive()
 
-                    try:
-                        data = json.loads(raw)
-                    except json.JSONDecodeError:
-                        logger.warning("Invalid JSON from browser: %s", raw[:500])
-                        continue
+                    if message["type"] == "websocket.disconnect":
+                        break
 
-                    if data.get("type") == "start":
-                        data = _session_update(
-                            bool(data.get("auto_turn", True))
+                    if message.get("text") is not None:
+                        raw = message["text"]
+
+                        logger.info(
+                            "Browser -> Server TEXT: %s",
+                            raw[:300]
                         )
 
-                    logger.info(
-                        "Browser -> Voice Live: type=%s",
-                        data.get("type")
-                    )
+                        try:
+                            data = json.loads(raw)
+                        except json.JSONDecodeError:
+                            logger.warning(
+                                "Invalid JSON from browser: %s",
+                                raw[:300]
+                            )
+                            continue
 
-                    await azure.send(data)
+                        if data.get("type") == "start":
+                            data = _session_update(
+                                bool(data.get("auto_turn", True))
+                            )
+
+                        logger.info(
+                            "Browser -> Voice Live: type=%s",
+                            data.get("type")
+                        )
+
+                        await azure.send(data)
+
+                    elif message.get("bytes") is not None:
+                        logger.warning(
+                            "Unexpected binary message from browser: %d bytes",
+                            len(message["bytes"])
+                        )
 
             #async def azure_to_browser():
             #    async for raw in azure:
             #        await ws.send_text(raw if isinstance(raw, str) else raw.decode("utf-8", "ignore"))
             async def azure_to_browser():
                 async for event in azure:
+                    event_type = getattr(event, "type", None)
                     logger.info(
                         "Voice Live event: type=%s class=%s",
                         getattr(event, "type", None),
                         type(event).__name__,
                     )
+                    if event_type in {
+                        "input_audio_buffer.speech_started",
+                        "input_audio_buffer.speech_stopped",
+                        "input_audio_buffer.committed",
+                        "conversation.item.input_audio_transcription.delta",
+                        "conversation.item.input_audio_transcription.completed",
+                        "conversation.item.input_audio_transcription.failed",
+                        "response.created",
+                        "response.done",
+                    }:
+                        logger.warning(
+                            "========== AUDIO EVENT ==========\n%s\n==================================",
+                            event,
+                        )
                     if type(event).__name__ == "ServerEventError":
                         logger.error("========== VOICE LIVE ERROR ==========")
                         logger.error("event repr: %r", event)
@@ -392,7 +435,299 @@ async def voice_ws(ws: WebSocket):
             await ws.close()
         except Exception:
             pass
+"""
+@api_router.websocket("/voice/ws")
+async def voice_ws(ws: WebSocket):
+    await ws.accept()
 
+    logger.info("==========================================")
+    logger.info("Browser WebSocket connected")
+    logger.info("==========================================")
+
+    if not voicelive_configured():
+        await ws.send_json({
+            "type": "error",
+            "error": {
+                "message": (
+                    "Voice Live is not configured. "
+                    "Check VOICELIVE_ENDPOINT, "
+                    "FOUNDRY_PROJECT_NAME, "
+                    "FOUNDRY_AGENT_NAME, "
+                    "FOUNDRY_AGENT_VERSION and Azure credentials."
+                )
+            }
+        })
+        await ws.close()
+        return
+
+    azure = None
+
+    async def browser_to_azure():
+        try:
+            while True:
+                message = await ws.receive()
+
+                if message["type"] == "websocket.disconnect":
+                    logger.info("Browser disconnected")
+                    return
+
+                # Browser messages are JSON control/signaling events.
+                if message.get("text") is not None:
+
+                    raw = message["text"]
+
+                    logger.info(
+                        "BROWSER -> SERVER: %s",
+                        raw[:500]
+                    )
+
+                    try:
+                        data = json.loads(raw)
+                    except json.JSONDecodeError:
+                        logger.warning(
+                            "Invalid JSON received from browser: %s",
+                            raw[:500]
+                        )
+                        continue
+
+                    event_type = data.get("type")
+
+                    logger.info(
+                        "BROWSER -> VOICE LIVE: %s",
+                        event_type
+                    )
+
+                    # Initial session configuration.
+                    if event_type == "start":
+
+                        auto_turn = bool(
+                            data.get("auto_turn", True)
+                        )
+
+                        session_update = _session_update(
+                            auto_turn=auto_turn
+                        )
+
+                        logger.info(
+                            "Sending session.update to Voice Live"
+                        )
+
+                        await azure.send(session_update)
+                        continue
+
+                    # Forward signaling and conversation events.
+                    await azure.send(data)
+
+                # We should NOT receive microphone RTP here.
+                elif message.get("bytes") is not None:
+
+                    audio_bytes = message["bytes"]
+
+                    logger.warning(
+                        "Received binary data from browser: %d bytes. "
+                        "Browser audio should be WebRTC, not WebSocket.",
+                        len(audio_bytes)
+                    )
+
+        except WebSocketDisconnect:
+            logger.info("browser_to_azure: browser disconnected")
+
+        except Exception:
+            logger.exception(
+                "browser_to_azure failed"
+            )
+
+    async def azure_to_browser():
+        try:
+            async for event in azure:
+
+                event_type = getattr(
+                    event,
+                    "type",
+                    None
+                )
+
+                logger.info(
+                    "VOICE LIVE -> SERVER: %s",
+                    event_type
+                )
+
+                # Useful diagnostics.
+                if event_type in {
+                    "input_audio_buffer.speech_started",
+                    "input_audio_buffer.speech_stopped",
+                    "input_audio_buffer.committed",
+                    "conversation.item.input_audio_transcription.delta",
+                    "conversation.item.input_audio_transcription.completed",
+                    "conversation.item.input_audio_transcription.failed",
+                    "response.created",
+                    "response.audio_transcript.delta",
+                    "response.audio_transcript.done",
+                    "response.done",
+                    "session.avatar.connecting",
+                    "session.updated",
+                }:
+                    logger.info(
+                        "VOICE EVENT: %s",
+                        event
+                    )
+
+                # Convert SDK event -> JSON.
+                try:
+
+                    if isinstance(event, str):
+                        payload = event
+
+                    elif isinstance(event, bytes):
+                        payload = event.decode(
+                            "utf-8",
+                            errors="ignore"
+                        )
+
+                    elif hasattr(event, "model_dump"):
+
+                        payload = json.dumps(
+                            event.model_dump(
+                                mode="json"
+                            ),
+                            default=str
+                        )
+
+                    elif hasattr(event, "as_dict"):
+
+                        payload = json.dumps(
+                            event.as_dict(),
+                            default=str
+                        )
+
+                    elif hasattr(event, "to_dict"):
+
+                        payload = json.dumps(
+                            event.to_dict(),
+                            default=str
+                        )
+
+                    else:
+
+                        payload = json.dumps(
+                            {
+                                "type": event_type
+                                    or type(event).__name__,
+                                "event": str(event)
+                            },
+                            default=str
+                        )
+
+                    await ws.send_text(payload)
+
+                except Exception:
+                    logger.exception(
+                        "Could not forward Voice Live event"
+                    )
+
+        except Exception:
+            logger.exception(
+                "azure_to_browser failed"
+            )
+
+    try:
+
+        # IMPORTANT:
+        # New Foundry Agent mode.
+        #
+        # Do NOT use VOICELIVE_API_KEY.
+        # ClientSecretCredential is used here.
+
+        azure = await connect(
+            endpoint=VOICELIVE_ENDPOINT,
+            credential=credential,
+            agent_config=agent_config,
+        ).__aenter__()
+
+        logger.info(
+            "=========================================="
+        )
+        logger.info(
+            "Connected to Azure Voice Live"
+        )
+        logger.info(
+            "Agent: %s",
+            FOUNDRY_AGENT_NAME
+        )
+        logger.info(
+            "Project: %s",
+            FOUNDRY_PROJECT_NAME
+        )
+        logger.info(
+            "Version: %s",
+            FOUNDRY_AGENT_VERSION
+        )
+        logger.info(
+            "=========================================="
+        )
+
+        browser_task = asyncio.create_task(
+            browser_to_azure()
+        )
+
+        azure_task = asyncio.create_task(
+            azure_to_browser()
+        )
+
+        done, pending = await asyncio.wait(
+            [browser_task, azure_task],
+            return_when=asyncio.FIRST_COMPLETED
+        )
+
+        for task in pending:
+            task.cancel()
+
+        await asyncio.gather(
+            *pending,
+            return_exceptions=True
+        )
+
+    except WebSocketDisconnect:
+
+        logger.info(
+            "Voice WebSocket disconnected"
+        )
+
+    except Exception as e:
+
+        logger.exception(
+            "VOICE WS ERROR"
+        )
+
+        try:
+            await ws.send_json({
+                "type": "error",
+                "error": {
+                    "message": str(e)
+                }
+            })
+        except Exception:
+            pass
+
+    finally:
+
+        if azure is not None:
+
+            try:
+                await azure.close()
+            except Exception:
+                logger.exception(
+                    "Error closing Voice Live"
+                )
+
+        try:
+            await ws.close()
+        except Exception:
+            pass
+
+        logger.info(
+            "Voice Live WebSocket cleanup completed"
+        )
 
 app.include_router(api_router)
 
