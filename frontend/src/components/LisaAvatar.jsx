@@ -11,8 +11,7 @@ import { parseCommand, describeSearch, readRow } from "../lib/voiceCommands";
 import { dispatchSearch, getResults } from "../lib/voiceBus";
 import { PAGES, pageByKey, pageByRoute, routeFor } from "../config/pages";
 
-const POSTER =
-    "https://images.unsplash.com/photo-1506863530036-1efeddceb993?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2Mzl8MHwxfHNlYXJjaHwxfHxwcm9mZXNzaW9uYWwlMjB3b21hbiUyMHBvcnRyYWl0JTIwc3R1ZGlvfGVufDB8fHx8MTc4NzUxMzIwMHww&ixlib=rb-4.1.0&q=85";
+const POSTER = "https://images.unsplash.com/photo-1506863530036-1efeddceb993?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2Mzl8MHwxfHNlYXJjaHwxfHxwcm9mZXNzaW9uYWwlMjB3b21hbiUyMHBvcnRyYWl0JTIwc3R1ZGlvfGVufDB8fHx8MTc4NzUxMzIwMHww&ixlib=rb-4.1.0&q=85";
 
 const STATUS_TEXT = {
     idle: "Avatar is off",
@@ -90,27 +89,17 @@ export const LisaAvatar = () => {
             readyState: track.readyState
         });
 
-        const AudioContext =
-            window.AudioContext ||
-            window.webkitAudioContext;
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
 
-        const audioContext =
-            new AudioContext();
+        const audioContext = new AudioContext();
 
-        audioContextRef.current =
-            audioContext;
+        audioContextRef.current = audioContext;
 
         await audioContext.resume();
 
-        console.log(
-            "🎤 Browser audio sample rate:",
-            audioContext.sampleRate
-        );
+        console.log("🎤 Browser audio sample rate:",audioContext.sampleRate);
 
-        const source =
-            audioContext.createMediaStreamSource(
-                stream
-            );
+        const source = audioContext.createMediaStreamSource(stream);
 
         micSourceRef.current = source;
 
@@ -121,49 +110,23 @@ export const LisaAvatar = () => {
          *
          * Later we can replace it with AudioWorklet.
          */
-        const processor =
-            audioContext.createScriptProcessor(
-                4096,
-                1,
-                1
-            );
-
-        processorRef.current =
-            processor;
+        const processor = audioContext.createScriptProcessor(4096, 1, 1);
+        processorRef.current = processor;
 
         /*
          * Keep microphone out of the local speakers.
          */
-        const muteGain =
-            audioContext.createGain();
-
+        const muteGain = audioContext.createGain();
         muteGain.gain.value = 0;
-
-        micMuteGainRef.current =
-            muteGain;
-
+        micMuteGainRef.current = muteGain;
         source.connect(processor);
-
         processor.connect(muteGain);
-
-        muteGain.connect(
-            audioContext.destination
-        );
-
+        muteGain.connect(audioContext.destination);
         processor.onaudioprocess = (event) => {
+            const ws = wsRef.current;
+            if (!ws || ws.readyState !== WebSocket.OPEN) { return; }
 
-            const ws =
-                wsRef.current;
-
-            if (
-                !ws ||
-                ws.readyState !== WebSocket.OPEN
-            ) {
-                return;
-            }
-
-            const input =
-                event.inputBuffer.getChannelData(0);
+            const input = event.inputBuffer.getChannelData(0);
 
             /*
              * Browser normally gives us 48 kHz.
@@ -173,9 +136,7 @@ export const LisaAvatar = () => {
              */
             const pcm16 = downsampleFloat32ToPCM16(input, audioContext.sampleRate, 24000);
 
-            if (!pcm16.length) {
-                return;
-            }
+            if (!pcm16.length) { return; }
 
             const base64 = arrayBufferToBase64(pcm16.buffer);
 
@@ -275,19 +236,10 @@ export const LisaAvatar = () => {
 
             setStatus("negotiating");
 
-            const iceServers =
-                session?.avatar?.ice_servers ||
-                session?.ice_servers ||
-                [];
+            const iceServers = session?.avatar?.ice_servers || session?.ice_servers || [];
+            console.log("Voice Live ICE servers:", iceServers);
 
-            console.log(
-                "Voice Live ICE servers:",
-                iceServers
-            );
-
-            const pc = new RTCPeerConnection({
-                iceServers
-            });
+            const pc = new RTCPeerConnection({iceServers});
 
             pcRef.current = pc;
 
@@ -296,111 +248,58 @@ export const LisaAvatar = () => {
             // -----------------------------------------
 
             pc.onconnectionstatechange = () => {
-
-                console.log(
-                    "WebRTC connectionState:",
-                    pc.connectionState
-                );
+                console.log("WebRTC connectionState:",pc.connectionState);
 
                 if (pc.connectionState === "connected") {
                     console.log("======================================");
-
                     console.log("✅ WEBRTC CONNECTED");
-
                     console.log("🎤 Microphone RTP should now reach Voice Live");
-
                     console.log("======================================");
 
                     setStatus("live");
                     startMicrophone();
                 }
 
-                if (
-                    pc.connectionState === "failed" ||
-                    pc.connectionState === "disconnected" ||
-                    pc.connectionState === "closed"
-                ) {
-                    console.warn(
-                        "WebRTC connection lost:",
-                        pc.connectionState
-                    );
+                if (pc.connectionState === "failed" || pc.connectionState === "disconnected" || pc.connectionState === "closed") {
+                    console.warn("WebRTC connection lost:", pc.connectionState);
                 }
             };
 
-            pc.oniceconnectionstatechange = () => {
+            pc.oniceconnectionstatechange = () => { console.log("WebRTC ICE state:", pc.iceConnectionState); };
 
-                console.log(
-                    "WebRTC ICE state:",
-                    pc.iceConnectionState
-                );
-            };
-
-            pc.onsignalingstatechange = () => {
-
-                console.log(
-                    "WebRTC signaling state:",
-                    pc.signalingState
-                );
-            };
-
+            pc.onsignalingstatechange = () => { console.log("WebRTC signaling state:", pc.signalingState); };
             // -----------------------------------------
             // Remote avatar tracks
             // -----------------------------------------
 
             pc.ontrack = (event) => {
 
-                console.log(
-                    "🎥 Remote WebRTC track:",
-                    event.track.kind
-                );
+                console.log("🎥 Remote WebRTC track:", event.track.kind);
 
-                console.log(
-                    "Track state:",
-                    event.track.readyState
-                );
+                console.log("Track state:", event.track.readyState);
 
-                const stream =
-                    event.streams?.[0];
+                const stream = event.streams?.[0];
 
                 if (!stream) {
-                    console.warn(
-                        "Remote track has no stream"
-                    );
+                    console.warn("Remote track has no stream");
                     return;
                 }
 
                 if (event.track.kind === "video") {
 
                     if (videoRef.current) {
-
-                        videoRef.current.srcObject =
-                            stream;
-
-                        videoRef.current
-                            .play()
-                            .catch((err) => {
-                                console.warn(
-                                    "Video autoplay failed:",
-                                    err
-                                );
+                        videoRef.current.srcObject = stream;
+                        videoRef.current.play().catch((err) => {
+                                console.warn("Video autoplay failed:",err);
                             });
                     }
                 }
 
                 if (event.track.kind === "audio") {
-
                     if (audioRef.current) {
-
-                        audioRef.current.srcObject =
-                            stream;
-
-                        audioRef.current
-                            .play()
-                            .catch((err) => {
-                                console.warn(
-                                    "Audio autoplay failed:",
-                                    err
-                                );
+                        audioRef.current.srcObject = stream;
+                        audioRef.current.play().catch((err) => {
+                                console.warn("Audio autoplay failed:",err);
                             });
                     }
                 }
@@ -490,47 +389,19 @@ export const LisaAvatar = () => {
             // Send avatar signaling
             // -----------------------------------------
 
-            const packed =
-                btoa(
-                    JSON.stringify({
-                        type: "offer",
-                        sdp: localSdp
-                    })
-                );
+            const packed = btoa(JSON.stringify({type: "offer",sdp: localSdp}));
 
-            const signalingMessage = {
-                type: "session.avatar.connect",
-                client_sdp: packed
-            };
+            const signalingMessage = { type: "session.avatar.connect", client_sdp: packed };
 
-            console.log(
-                "Sending session.avatar.connect"
-            );
+            console.log("Sending session.avatar.connect");
 
-            wsRef.current?.send(
-                JSON.stringify(
-                    signalingMessage
-                )
-            );
+            wsRef.current?.send(JSON.stringify(signalingMessage));
 
         } catch (error) {
-
-            console.error(
-                "❌ WebRTC setup failed:",
-                error
-            );
-
-            setError(
-                error?.message ||
-                "Unable to start microphone/WebRTC."
-            );
-
+            console.error("❌ WebRTC setup failed:", error);
+            setError(error?.message || "Unable to start microphone/WebRTC.");
             setStatus("error");
-
-            pushMessage(
-                "assistant",
-                "Unable to start the microphone connection."
-            );
+            pushMessage("assistant", "Unable to start the microphone connection.");
         }
     };
 
@@ -570,149 +441,69 @@ export const LisaAvatar = () => {
     //};
 
     const handleServerEvent = async (raw) => {
-
         let event;
 
         try {
-            event =
-                typeof raw === "string"
-                    ? JSON.parse(raw)
-                    : raw;
+            event = typeof raw === "string" ? JSON.parse(raw) : raw;
         } catch (error) {
-
-            console.warn(
-                "Invalid Voice Live event:",
-                raw
-            );
-
+            console.warn("Invalid Voice Live event:", raw);
             return;
         }
-
-        console.log(
-            "VOICE LIVE EVENT:",
-            event.type,
-            event
-        );
-
+        console.log("VOICE LIVE EVENT:", event.type, event);
         switch (event.type) {
-
             // -----------------------------------------
             // Session ready
             // -----------------------------------------
-
             case "session.updated":
-
-                console.log(
-                    "✅ Voice Live session updated"
-                );
-
-                await setupWebRTC(
-                    event.session
-                );
-
+                console.log("✅ Voice Live session updated");
+                await setupWebRTC(event.session);
                 break;
-
-
             // -----------------------------------------
             // Avatar SDP answer
             // -----------------------------------------
-
             case "session.avatar.connecting":
+                console.log("🎥 Voice Live returned avatar SDP");
 
-                console.log(
-                    "🎥 Voice Live returned avatar SDP"
-                );
-
-                if (
-                    event.server_sdp &&
-                    pcRef.current
-                ) {
-
+                if (event.server_sdp && pcRef.current) {
                     try {
+                        const answer = JSON.parse( atob( event.server_sdp ) );
+                        console.log("Setting remote SDP");
+                        await pcRef.current.setRemoteDescription({ type: "answer", sdp: answer.sdp });
 
-                        const answer =
-                            JSON.parse(
-                                atob(
-                                    event.server_sdp
-                                )
-                            );
-
-                        console.log(
-                            "Setting remote SDP"
-                        );
-
-                        await pcRef.current
-                            .setRemoteDescription({
-                                type: "answer",
-                                sdp: answer.sdp
-                            });
-
-                        console.log(
-                            "✅ Remote SDP set"
-                        );
+                        console.log("✅ Remote SDP set");
 
                     } catch (error) {
-
-                        console.error(
-                            "❌ Failed to set remote SDP:",
-                            error
-                        );
-
-                        setError(
-                            "Avatar SDP negotiation failed."
-                        );
-
+                        console.error("❌ Failed to set remote SDP:", error);
+                        setError("Avatar SDP negotiation failed.");
                         setStatus("error");
                     }
                 }
-
                 break;
-
-
             // -----------------------------------------
-            // USER SPEECH
+            // USER SPEECH STARTED
             // -----------------------------------------
-
             case "input_audio_buffer.speech_started":
-
-                console.log(
-                    "🎤 SERVER DETECTED SPEECH START"
-                );
-
+                console.log("🎤 SERVER DETECTED SPEECH START");
                 break;
-
-
+            // -----------------------------------------
+            // USER SPEECH STOPPED
+            // -----------------------------------------
             case "input_audio_buffer.speech_stopped":
-
-                console.log(
-                    "🎤 SERVER DETECTED SPEECH STOP"
-                );
-
+                console.log("🎤 SERVER DETECTED SPEECH STOP");
                 break;
-
-
+            // -----------------------------------------
+            // USER SPEECH COMMITTED (finalized)
+            // -----------------------------------------
             case "input_audio_buffer.committed":
-
-                console.log(
-                    "🎤 SERVER COMMITTED AUDIO"
-                );
-
+                console.log("🎤 SERVER COMMITTED AUDIO");
                 break;
-
 
             // -----------------------------------------
             // TRANSCRIPTION
             // -----------------------------------------
-
             case "conversation.item.input_audio_transcription.delta":
-
-                console.log(
-                    "📝 Transcript delta:",
-                    event.delta
-                );
-
+                console.log("📝 Transcript delta:",event.delta);
                 break;
-
 
             case "conversation.item.input_audio_transcription.completed":
                 console.log("======================================");
@@ -737,80 +528,36 @@ export const LisaAvatar = () => {
             // -----------------------------------------
 
             case "response.audio_transcript.delta":
-
-                console.log(
-                    "🤖 Agent transcript delta:",
-                    event.delta
-                );
-
+                console.log("🤖 Agent transcript delta:", event.delta);
                 break;
-
 
             case "response.audio_transcript.done":
-
-                console.log(
-                    "🤖 Agent response:",
-                    event.transcript
-                );
-
+                console.log("🤖 Agent response:", event.transcript);
                 if (event.transcript) {
-
-                    pushMessage(
-                        "assistant",
-                        event.transcript
-                    );
+                     pushMessage("assistant", event.transcript);
                 }
-
                 break;
-
 
             case "response.created":
-
-                console.log(
-                    "🤖 Agent response started"
-                );
-
+                console.log("🤖 Agent response started");
                 break;
-
 
             case "response.done":
-
-                console.log(
-                    "🤖 Agent response completed"
-                );
-
+                console.log("🤖 Agent response completed");
                 break;
-
 
             // -----------------------------------------
             // ERROR
             // -----------------------------------------
-
             case "error":
-
-                console.error(
-                    "❌ Voice Live error:",
-                    event
-                );
-
-                setError(
-                    event.error?.message ||
-                    "Voice Live error"
-                );
-
+                console.error("❌ Voice Live error:", event);
+                setError(event.error?.message || "Voice Live error");
                 setStatus("error");
-
                 break;
 
-
             default:
-
                 // Keep this while debugging.
-                console.log(
-                    "Voice Live event:",
-                    event.type
-                );
-
+                console.log("Voice Live event:",event.type);
                 break;
         }
     };
@@ -1005,139 +752,55 @@ export const LisaAvatar = () => {
         </>
     );
 };
-function downsampleFloat32ToPCM16(
-    input,
-    inputSampleRate,
-    outputSampleRate
-) {
-    if (
-        outputSampleRate >= inputSampleRate
-    ) {
-        const pcm =
-            new Int16Array(
-                input.length
-            );
-
-        for (
-            let i = 0;
-            i < input.length;
-            i++
-        ) {
-            let sample =
-                Math.max(
-                    -1,
-                    Math.min(
-                        1,
-                        input[i]
-                    )
-                );
-
-            pcm[i] =
-                sample < 0
-                    ? sample * 0x8000
-                    : sample * 0x7fff;
+function downsampleFloat32ToPCM16(input,inputSampleRate,outputSampleRate) {
+    if (outputSampleRate >= inputSampleRate) {
+        const pcm = new Int16Array(input.length);
+        for (let i = 0;i < input.length;i++) {
+            let sample = Math.max(-1,Math.min(1,input[i]));
+            pcm[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
         }
-
         return pcm;
     }
 
-    const ratio =
-        inputSampleRate /
-        outputSampleRate;
+    const ratio = inputSampleRate / outputSampleRate;
+    const outputLength = Math.round(input.length / ratio);
 
-    const outputLength =
-        Math.round(
-            input.length /
-            ratio
-        );
-
-    const output =
-        new Int16Array(
-            outputLength
-        );
+    const output = new Int16Array(outputLength);
 
     let offsetResult = 0;
     let offsetBuffer = 0;
 
-    while (
-        offsetResult <
-        output.length
-    ) {
-        const nextOffsetBuffer =
-            Math.round(
-                (offsetResult + 1) *
-                ratio
-            );
+    while (offsetResult < output.length) {
+        const nextOffsetBuffer =  Math.round((offsetResult + 1) * ratio);
 
         let accum = 0;
         let count = 0;
 
-        for (
-            let i = offsetBuffer;
-            i < nextOffsetBuffer &&
-            i < input.length;
-            i++
-        ) {
+        for (let i = offsetBuffer; i < nextOffsetBuffer && i < input.length; i++) {
             accum += input[i];
             count++;
         }
 
-        const sample =
-            count
-                ? accum / count
-                : 0;
+        const sample = count ? accum / count : 0;
 
-        const clamped =
-            Math.max(
-                -1,
-                Math.min(
-                    1,
-                    sample
-                )
-            );
+        const clamped = Math.max(-1,Math.min(1,sample));
 
-        output[offsetResult] =
-            clamped < 0
-                ? clamped * 0x8000
-                : clamped * 0x7fff;
+        output[offsetResult] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
 
         offsetResult++;
-
-        offsetBuffer =
-            nextOffsetBuffer;
+        offsetBuffer = nextOffsetBuffer;
     }
 
     return output;
 }
 
-function arrayBufferToBase64(
-    buffer
-) {
-    const bytes =
-        new Uint8Array(buffer);
-
+function arrayBufferToBase64(buffer) {
+    const bytes = new Uint8Array(buffer);
     let binary = "";
-
     const chunkSize = 0x8000;
-
-    for (
-        let i = 0;
-        i < bytes.length;
-        i += chunkSize
-    ) {
-        const chunk =
-            bytes.subarray(
-                i,
-                Math.min(
-                    i + chunkSize,
-                    bytes.length
-                )
-            );
-
-        binary += String.fromCharCode(
-            ...chunk
-        );
+    for (let i = 0;i < bytes.length;i += chunkSize) {
+        const chunk = bytes.subarray(i,Math.min(i + chunkSize,bytes.length));
+        binary += String.fromCharCode(...chunk);
     }
-
     return btoa(binary);
 }
