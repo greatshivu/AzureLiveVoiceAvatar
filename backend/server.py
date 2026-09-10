@@ -13,6 +13,9 @@ from pathlib import Path
 from typing import Optional
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlencode
+from pydantic import BaseModel
+
+from pages_config import get_pages_config, parse_command_internal, execute_agent_tool
 
 import websockets
 
@@ -204,6 +207,23 @@ async def get_config():
         "avatar_character": AVATAR_CHARACTER,
         "avatar_style": AVATAR_STYLE,
     }
+
+
+@api_router.get("/pages")
+async def get_pages():
+    return get_pages_config()
+
+
+class CommandRequest(BaseModel):
+    text: Optional[str] = None
+    command: Optional[str] = None
+    current_page: Optional[str] = "orders"
+
+
+@api_router.post("/command/execute")
+async def execute_command(req: CommandRequest):
+    raw_text = req.text or req.command or ""
+    return parse_command_internal(raw_text, req.current_page or "orders")
 
 
 @api_router.get("/orders/search")
@@ -461,6 +481,11 @@ async def voice_ws(ws: WebSocket):
         return
 
     azure = None
+    session_state = {
+        "use_agent": True,
+        "current_page": "orders",
+        "processed_calls": set()
+    }
 
     async def browser_to_azure():
         try:
@@ -473,46 +498,47 @@ async def voice_ws(ws: WebSocket):
 
                 # Browser messages are JSON control/signaling events.
                 if message.get("text") is not None:
-
                     raw = message["text"]
-
-                    logger.info(
-                        "BROWSER -> SERVER: %s",
-                        raw[:500]
-                    )
+                    logger.info("BROWSER -> SERVER: %s", raw[:500])
 
                     try:
                         data = json.loads(raw)
                     except json.JSONDecodeError:
-                        logger.warning(
-                            "Invalid JSON received from browser: %s",
-                            raw[:500]
-                        )
+                        logger.warning("Invalid JSON received from browser: %s", raw[:500])
                         continue
 
                     event_type = data.get("type")
-
-                    logger.info(
-                        "BROWSER -> VOICE LIVE: %s",
-                        event_type
-                    )
+                    logger.info("BROWSER -> VOICE LIVE: %s", event_type)
 
                     # Initial session configuration.
                     if event_type == "start":
-
-                        auto_turn = bool(
-                            data.get("auto_turn", True)
-                        )
-
-                        session_update = _session_update(
-                            auto_turn=auto_turn
-                        )
-
-                        logger.info(
-                            "Sending session.update to Voice Live"
-                        )
-
+                        auto_turn = bool(data.get("auto_turn", True))
+                        session_state["use_agent"] = bool(data.get("use_agent", True))
+                        if data.get("current_page"):
+                            session_state["current_page"] = str(data.get("current_page"))
+                        session_update = _session_update(auto_turn=auto_turn)
+                        logger.info("Sending session.update to Voice Live (use_agent=%s, page=%s)", session_state["use_agent"], session_state["current_page"])
                         await azure.send(session_update)
+                        continue
+
+                    if event_type == "set_agent_mode":
+                        session_state["use_agent"] = bool(data.get("use_agent", True))
+                        logger.info("Updated use_agent mode to: %s", session_state["use_agent"])
+                        continue
+
+                    if event_type == "page.change":
+                        session_state["current_page"] = str(data.get("page", "orders"))
+                        logger.info("Updated current_page to: %s", session_state["current_page"])
+                        continue
+
+                    if event_type == "command.execute":
+                        cmd_text = data.get("text", "")
+                        cur_p = data.get("current_page", session_state["current_page"])
+                        action = parse_command_internal(cmd_text, cur_p)
+                        await ws.send_text(json.dumps({
+                            "type": "ui.action",
+                            "action": action
+                        }))
                         continue
 
                     # Forward signaling and conversation events.
@@ -520,9 +546,7 @@ async def voice_ws(ws: WebSocket):
 
                 # We should NOT receive microphone RTP here.
                 elif message.get("bytes") is not None:
-
                     audio_bytes = message["bytes"]
-
                     logger.warning(
                         "Received binary data from browser: %d bytes. "
                         "Browser audio should be WebRTC, not WebSocket.",
@@ -531,26 +555,14 @@ async def voice_ws(ws: WebSocket):
 
         except WebSocketDisconnect:
             logger.info("browser_to_azure: browser disconnected")
-
         except Exception:
-            logger.exception(
-                "browser_to_azure failed"
-            )
+            logger.exception("browser_to_azure failed")
 
     async def azure_to_browser():
         try:
             async for event in azure:
-
-                event_type = getattr(
-                    event,
-                    "type",
-                    None
-                )
-
-                logger.info(
-                    "VOICE LIVE -> SERVER: %s",
-                    event_type
-                )
+                event_type = getattr(event, "type", None) or (event.get("type") if isinstance(event, dict) else None)
+                logger.info("VOICE LIVE -> SERVER: %s", event_type)
 
                 # Useful diagnostics.
                 if event_type in {
@@ -566,69 +578,78 @@ async def voice_ws(ws: WebSocket):
                     "response.done",
                     "session.avatar.connecting",
                     "session.updated",
+                    "response.output_item.done",
+                    "response.function_call_arguments.done",
                 }:
-                    logger.info(
-                        "VOICE EVENT: %s",
-                        event
-                    )
+                    logger.info("VOICE EVENT: %s", event)
 
-                # Convert SDK event -> JSON.
+                # Intercept agent function calls when in Agent Mode (only on response.output_item.done when arguments are complete)
+                item = getattr(event, "item", None) or (event.get("item") if isinstance(event, dict) else None) or {}
+                item_type = getattr(item, "type", None) or (item.get("type") if isinstance(item, dict) else "")
+
+                if event_type == "response.output_item.done" and item_type == "function_call":
+                    call_id = getattr(item, "call_id", None) or (item.get("call_id") if isinstance(item, dict) else None)
+                    func_name = getattr(item, "name", None) or (item.get("name") if isinstance(item, dict) else None)
+                    raw_args = getattr(item, "arguments", None) or (item.get("arguments") if isinstance(item, dict) else "{}")
+
+                    logger.info("AGENT FUNCTION CALL FINALIZED: name=%s call_id=%s args=%s (use_agent=%s)", func_name, call_id, raw_args, session_state["use_agent"])
+
+                    if session_state["use_agent"] and call_id and func_name and call_id not in session_state["processed_calls"]:
+                        session_state["processed_calls"].add(call_id)
+                        try:
+                            args_dict = json.loads(raw_args) if isinstance(raw_args, str) else (raw_args or {})
+                        except Exception:
+                            args_dict = {}
+
+                        tool_output, ui_action = await execute_agent_tool(func_name, args_dict, db, session_state["current_page"])
+                        logger.info("EXECUTED AGENT TOOL: output=%s action=%s", tool_output, ui_action)
+
+                        # Send function call output back to Voice Live so avatar speaks result
+                        try:
+                            await azure.send({
+                                "type": "conversation.item.create",
+                                "item": {
+                                    "type": "function_call_output",
+                                    "call_id": call_id,
+                                    "output": json.dumps(tool_output)
+                                }
+                            })
+                            await azure.send({"type": "response.create"})
+                        except Exception as ex:
+                            logger.exception("Failed to send function_call_output to Azure: %s", ex)
+
+                        # Send UI action to browser to update frontend page & filters
+                        try:
+                            await ws.send_text(json.dumps({
+                                "type": "ui.action",
+                                "action": ui_action
+                            }))
+                        except Exception as ex:
+                            logger.exception("Failed to send ui.action to browser: %s", ex)
+
+                # Convert SDK event -> JSON and forward to browser.
                 try:
-
                     if isinstance(event, str):
                         payload = event
-
                     elif isinstance(event, bytes):
-                        payload = event.decode(
-                            "utf-8",
-                            errors="ignore"
-                        )
-
+                        payload = event.decode("utf-8", errors="ignore")
                     elif hasattr(event, "model_dump"):
-
-                        payload = json.dumps(
-                            event.model_dump(
-                                mode="json"
-                            ),
-                            default=str
-                        )
-
+                        payload = json.dumps(event.model_dump(mode="json"), default=str)
                     elif hasattr(event, "as_dict"):
-
-                        payload = json.dumps(
-                            event.as_dict(),
-                            default=str
-                        )
-
+                        payload = json.dumps(event.as_dict(), default=str)
                     elif hasattr(event, "to_dict"):
-
-                        payload = json.dumps(
-                            event.to_dict(),
-                            default=str
-                        )
-
+                        payload = json.dumps(event.to_dict(), default=str)
                     else:
-
                         payload = json.dumps(
-                            {
-                                "type": event_type
-                                    or type(event).__name__,
-                                "event": str(event)
-                            },
+                            {"type": event_type or type(event).__name__, "event": str(event)},
                             default=str
                         )
-
                     await ws.send_text(payload)
-
                 except Exception:
-                    logger.exception(
-                        "Could not forward Voice Live event"
-                    )
+                    logger.exception("Could not forward Voice Live event")
 
         except Exception:
-            logger.exception(
-                "azure_to_browser failed"
-            )
+            logger.exception("azure_to_browser failed")
 
     try:
 

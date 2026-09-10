@@ -6,10 +6,10 @@ import { Switch } from "./ui/switch";
 import { Input } from "./ui/input";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
-import { getConfig } from "../lib/api";
+import { getConfig, executeInternalCommand } from "../lib/api";
 import { parseCommand, describeSearch, readRow } from "../lib/voiceCommands";
 import { dispatchSearch, getResults } from "../lib/voiceBus";
-import { PAGES, pageByKey, pageByRoute, routeFor } from "../config/pages";
+import { PAGES, pageByKey, pageByRoute, routeFor, onPagesUpdated } from "../config/pages";
 
 const POSTER = "https://images.unsplash.com/photo-1506863530036-1efeddceb993?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2Mzl8MHwxfHNlYXJjaHwxfHxwcm9mZXNzaW9uYWwlMjB3b21hbiUyMHBvcnRyYWl0JTIwc3R1ZGlvfGVufDB8fHx8MTc4NzUxMzIwMHww&ixlib=rb-4.1.0&q=85";
 
@@ -35,6 +35,8 @@ export const LisaAvatar = () => {
     const [error, setError] = useState("");
     const [textInput, setTextInput] = useState("");
     const [autoTurn, setAutoTurn] = useState(true);
+    const [useAgent, setUseAgent] = useState(true);
+    const [pagesList, setPagesList] = useState(PAGES);
     const audioContextRef = useRef(null);
     const micStreamRef = useRef(null);
     const micSourceRef = useRef(null);
@@ -48,15 +50,19 @@ export const LisaAvatar = () => {
     const micRef = useRef(null);
     const avatarOnRef = useRef(false);
     const autoTurnRef = useRef(true);
+    const useAgentRef = useRef(true);
     const locationRef = useRef(location.pathname);
     const scrollRef = useRef(null);
 
     useEffect(() => {
         getConfig().then(setConfig).catch(() => { });
+        const unsub = onPagesUpdated((updated) => setPagesList([...updated]));
+        return unsub;
     }, []);
     useEffect(() => { locationRef.current = location.pathname; }, [location.pathname]);
     useEffect(() => { avatarOnRef.current = avatarOn; }, [avatarOn]);
     useEffect(() => { autoTurnRef.current = autoTurn; }, [autoTurn]);
+    useEffect(() => { useAgentRef.current = useAgent; }, [useAgent]);
     useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [messages, status]);
 
     const currentKey = () => pageByRoute(locationRef.current).key;
@@ -147,6 +153,33 @@ export const LisaAvatar = () => {
     };
 
     // ---- Config-driven UI actions (drive the on-screen pages) ----
+    const executeResolvedAction = (action) => {
+        if (!action) return;
+        const cur = currentKey();
+        const target = action.target || cur;
+        if (action.type === "navigate") {
+            if (target !== cur) navigate(routeFor(target));
+            const page = pageByKey(target);
+            pushMessage("assistant", action.message || `Opening ${page?.title || target}.`);
+        } else if (action.type === "search") {
+            if (target !== cur) navigate(routeFor(target));
+            const page = pageByKey(target);
+            dispatchSearch(target, {
+                filters: action.filters || {},
+                page: action.page,
+                reset: action.reset,
+                onResult: (total) => {
+                    const c = total == null ? "" : ` (${total.toLocaleString()} matching ${page?.noun || "records"})`;
+                    pushMessage("assistant", action.message || `${describeSearch(action, page)}${c}`);
+                },
+            });
+        } else if (action.type === "read") {
+            readTopRow(action, cur);
+        } else if (action.message) {
+            pushMessage("assistant", action.message);
+        }
+    };
+
     const runSearch = (intent, targetKey, cur) => {
         if (targetKey !== cur) navigate(routeFor(targetKey));
         const page = pageByKey(targetKey);
@@ -176,6 +209,18 @@ export const LisaAvatar = () => {
 
     const runCommand = async (text) => {
         const cur = currentKey();
+        try {
+            // API calls function internally (present at same application)
+            const action = await executeInternalCommand(text, cur);
+            if (action && action.type && action.type !== "chat") {
+                executeResolvedAction(action);
+                return;
+            }
+        } catch (e) {
+            console.warn("API executeInternalCommand error, falling back locally:", e);
+        }
+
+        // Local fallback parser
         const intent = parseCommand(text, cur);
         if (intent.type === "navigate") {
             navigate(routeFor(intent.target));
@@ -187,7 +232,6 @@ export const LisaAvatar = () => {
         } else if (!avatarOnRef.current) {
             pushMessage("assistant", "Turn on Lisa to talk to the agent, or try a search/navigation command.");
         }
-        // When live, non-command speech is handled by the Foundry agent via the avatar.
     };
 
     // ---- Voice Live WebRTC signalling ----
@@ -505,6 +549,13 @@ export const LisaAvatar = () => {
                 console.log("📝 Transcript delta:",event.delta);
                 break;
 
+            case "ui.action":
+                console.log("⚡ Received ui.action from server:", event.action);
+                if (event.action) {
+                    executeResolvedAction(event.action);
+                }
+                break;
+
             case "conversation.item.input_audio_transcription.completed":
                 console.log("======================================");
                 console.log("🗣️ SERVER RECEIVED SPEECH:");
@@ -512,13 +563,15 @@ export const LisaAvatar = () => {
                 console.log("======================================");
                 if (event.transcript) {
                     pushMessage("user", event.transcript);
-                    // IMPORTANT:
-                    // Do not send the transcript back
-                    // to the agent here.
-                    //
-                    // Voice Live already sent the
-                    // audio to the agent.
-                    runCommand(event.transcript);
+                    if (!useAgentRef.current) {
+                        // Unchecked mode: On user command, API calls function internally
+                        executeInternalCommand(event.transcript, currentKey())
+                            .then(executeResolvedAction)
+                            .catch((err) => {
+                                console.error("Internal command error:", err);
+                                runCommand(event.transcript);
+                            });
+                    }
                 }
                 break;
 
@@ -572,7 +625,12 @@ export const LisaAvatar = () => {
         setStatus("connecting");
         const ws = new WebSocket(VOICE_WS);
         wsRef.current = ws;
-        ws.onopen = () => ws.send(JSON.stringify({ type: "start", auto_turn: autoTurnRef.current }));
+        ws.onopen = () => ws.send(JSON.stringify({
+            type: "start",
+            auto_turn: autoTurnRef.current,
+            use_agent: useAgentRef.current,
+            current_page: currentKey()
+        }));
         ws.onmessage = (evt) => handleServerEvent(evt.data);
         ws.onerror = () => { setStatus("error"); setError("Could not reach the Voice Live service."); };
         ws.onclose = () => { if (avatarOnRef.current) setStatus("idle"); };
@@ -596,21 +654,39 @@ export const LisaAvatar = () => {
         else stopAvatar();
     };
 
+    const handleUserUtterance = (text) => {
+        const t = (text || "").trim();
+        if (!t) return;
+        pushMessage("user", t);
+
+        if (useAgentRef.current) {
+            // Checked mode: Voice/Text -> API -> Agent -> Function -> Browser
+            if (avatarOnRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
+                console.log("⌨️ Sending utterance to Voice Live Agent:", t);
+                wsRef.current.send(JSON.stringify({
+                    type: "conversation.item.create",
+                    item: { type: "message", role: "user", content: [{ type: "input_text", text: t }] },
+                }));
+                wsRef.current.send(JSON.stringify({ type: "response.create" }));
+            } else {
+                runCommand(t);
+            }
+        } else {
+            // Unchecked mode: On user command, API calls function internally
+            executeInternalCommand(t, currentKey())
+                .then(executeResolvedAction)
+                .catch((err) => {
+                    console.error("Internal command error:", err);
+                    runCommand(t);
+                });
+        }
+    };
+
     const onSendText = () => {
         const t = textInput.trim();
         if (!t) return;
         setTextInput("");
-        pushMessage("user", t);
-        // Typed text: if live, forward to the agent so the avatar responds; also run UI commands.
-        if (avatarOnRef.current && wsRef.current?.readyState === 1) {
-            console.log("⌨️ Sending text to Voice Live:", text);
-            wsRef.current.send(JSON.stringify({
-                type: "conversation.item.create",
-                item: { type: "message", role: "user", content: [{ type: "input_text", text: t }] },
-            }));
-            wsRef.current.send(JSON.stringify({ type: "response.create" }));
-        }
-        runCommand(t);
+        handleUserUtterance(t);
     };
 
     const isLive = status === "live" || status === "negotiating";
@@ -667,11 +743,33 @@ export const LisaAvatar = () => {
                             </div>
                         </div>
 
-                        <div className="flex items-center gap-3 px-4 py-2 border-b border-slate-100 bg-slate-50/60">
-                            <Checkbox id="lisa-autoturn" checked={autoTurn} onCheckedChange={(v) => setAutoTurn(!!v)} data-testid="lisa-autoturn-checkbox" />
-                            <label htmlFor="lisa-autoturn" className="text-[11px] font-medium text-slate-600 cursor-pointer select-none">
-                                Auto turn-taking (barge-in)
-                            </label>
+                        <div className="flex flex-col gap-1.5 px-4 py-2 border-b border-slate-100 bg-slate-50/60">
+                            <div className="flex items-center gap-2">
+                                <Checkbox id="lisa-autoturn" checked={autoTurn} onCheckedChange={(v) => setAutoTurn(!!v)} data-testid="lisa-autoturn-checkbox" />
+                                <label htmlFor="lisa-autoturn" className="text-[11px] font-medium text-slate-600 cursor-pointer select-none">
+                                    Auto turn-taking (barge-in)
+                                </label>
+                            </div>
+                            <div className="flex items-center gap-2 pt-0.5">
+                                <Checkbox
+                                    id="lisa-agent-mode"
+                                    checked={useAgent}
+                                    onCheckedChange={(v) => {
+                                        const val = !!v;
+                                        setUseAgent(val);
+                                        if (wsRef.current?.readyState === WebSocket.OPEN) {
+                                            wsRef.current.send(JSON.stringify({ type: "set_agent_mode", use_agent: val }));
+                                        }
+                                    }}
+                                    data-testid="lisa-agent-mode-checkbox"
+                                />
+                                <label htmlFor="lisa-agent-mode" className="text-[11px] font-medium text-slate-700 cursor-pointer select-none flex items-center gap-1.5">
+                                    <span>Use Agent for Actions</span>
+                                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-semibold ${useAgent ? "bg-blue-100 text-blue-700" : "bg-slate-200 text-slate-600"}`}>
+                                        {useAgent ? "AI Agent" : "Direct API"}
+                                    </span>
+                                </label>
+                            </div>
                         </div>
 
                         <div className={`relative h-48 md:h-56 w-full bg-slate-900 ${isLive ? "lisa-active-glow" : ""}`}>
@@ -723,7 +821,7 @@ export const LisaAvatar = () => {
                             {hints.map((h) => (
                                 <button
                                     key={h}
-                                    onClick={() => { pushMessage("user", h); runCommand(h); }}
+                                    onClick={() => handleUserUtterance(h)}
                                     data-testid={`lisa-hint-${h.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`}
                                     className="text-[11px] px-2 py-1 rounded-full border border-slate-200 bg-white text-slate-600 hover:border-blue-400 hover:text-blue-600 transition-colors active:scale-95"
                                 >

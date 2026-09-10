@@ -15,6 +15,16 @@ export const getConfig = async () => {
   return data;
 };
 
+export const getPagesConfig = async () => {
+  const { data } = await api.get("/pages");
+  return data;
+};
+
+export const executeInternalCommand = async (text, currentPage = "orders") => {
+  const { data } = await api.post("/command/execute", { text, current_page: currentPage });
+  return data;
+};
+
 export const getAvatarCredentials = async () => {
   const { data } = await api.get("/avatar/credentials");
   return data;

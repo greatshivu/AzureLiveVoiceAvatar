@@ -1,10 +1,17 @@
+import { useState, useEffect } from "react";
 import { NavLink } from "react-router-dom";
 import { Package, ShoppingCart, Sparkle, Table, Files } from "@phosphor-icons/react";
-import { PAGES } from "../config/pages";
+import { PAGES, onPagesUpdated } from "../config/pages";
 
 const ICONS = { cart: ShoppingCart, package: Package, table: Table, files: Files };
 
 export const Navbar = () => {
+  const [pages, setPages] = useState(PAGES);
+
+  useEffect(() => {
+    return onPagesUpdated((updated) => setPages([...updated]));
+  }, []);
+
   const linkBase = "flex items-center gap-2 px-4 py-2 text-sm font-medium tracking-tight border-b-2 transition-colors h-16";
   const active = "border-blue-600 text-slate-900";
   const inactive = "border-transparent text-slate-500 hover:text-slate-900";
@@ -23,7 +30,7 @@ export const Navbar = () => {
         </div>
 
         <nav className="flex items-center h-full">
-          {PAGES.map((p) => {
+          {pages.map((p) => {
             const Icon = ICONS[p.navIcon] || Table;
             return (
               <NavLink
