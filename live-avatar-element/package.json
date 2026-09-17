@@ -1,0 +1,42 @@
+{
+  "name": "live-avatar-element",
+  "version": "1.0.3",
+  "description": "Framework-agnostic Web Component for Azure Voice Live interactive avatar assistant. Compatible with Angular, ASP.NET Core, .NET MAUI, React, Vue, and plain HTML.",
+  "main": "./dist/live-avatar-popup.umd.js",
+  "module": "./dist/live-avatar-popup.es.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/live-avatar-popup.es.js",
+      "require": "./dist/live-avatar-popup.umd.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "keywords": [
+    "azure",
+    "avatar",
+    "webrtc",
+    "voice-live",
+    "web-component",
+    "angular",
+    "react",
+    "custom-elements"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "vite": "^5.2.0",
+    "vite-plugin-dts": "^3.9.1"
+  }
+}

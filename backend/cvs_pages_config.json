@@ -1,0 +1,1653 @@
+[
+    {
+      "key": "orders",
+      "prefix": "order",
+      "title": "Forwarding Orders",
+      "subtitle": "Search, filter, and track purchase orders, cargo marks, and supplier shipments.",
+      "prompt": "Forwarding Orders search page (/forwarding/orders). Filter purchase orders and cargo by keyword (ORD- or PO-), transport mode (Sea, Air, Road, Rail), status (Booked, Confirmed, In Transit, Delivered, Cancelled), priority (Low, Medium, High), commercial invoices, and order date ranges.",
+      "route": "/forwarding/orders",
+      "navIcon": "cart",
+      "noun": "orders",
+      "collection": "orders",
+      "endpoint": "/forwarding/orders/search",
+      "aliases": [
+        "order",
+        "orders",
+        "order search",
+        "purchase orders",
+        "forwarding orders",
+        "po",
+        "fwd orders",
+        "procurement"
+      ],
+      "searchPlaceholder": "Search by order #, supplier, load port, or client\u2026",
+      "hints": [
+        "Show in-transit orders",
+        "Ocean freight orders",
+        "High priority orders",
+        "Orders from Shanghai",
+        "Read the top order",
+        "Show orders with commercial invoices"
+      ],
+      "controls": [
+        {
+          "id": "q",
+          "type": "text",
+          "param": "q",
+          "label": "Keyword",
+          "idPrefix": "ORD-",
+          "idRegex": "(?:ord|po)[-\\s]?(\\d{3,})|order(?:\\s+number)?[\\s#]+(\\d{3,})",
+          "searchFields": [
+            "orderNo",
+            "supplier",
+            "loadPort",
+            "dischargePort",
+            "client",
+            "supplierInvoiceNo"
+          ],
+          "prefixWords": [
+            "keyword",
+            "order",
+            "number",
+            "po",
+            "supplier",
+            "load port",
+            "discharge port",
+            "client"
+          ]
+        },
+        {
+          "id": "transport_mode",
+          "type": "select",
+          "param": "transportMode",
+          "label": "Transport Mode",
+          "options": [
+            {
+              "value": "Sea",
+              "synonyms": [
+                "sea",
+                "ocean",
+                "ocean freight",
+                "maritime",
+                "vessel",
+                "ship",
+                "by sea"
+              ]
+            },
+            {
+              "value": "Air",
+              "synonyms": [
+                "air",
+                "flight",
+                "plane",
+                "air freight",
+                "by air"
+              ]
+            },
+            {
+              "value": "Road",
+              "synonyms": [
+                "road",
+                "truck",
+                "trucking",
+                "land",
+                "ground"
+              ]
+            },
+            {
+              "value": "Rail",
+              "synonyms": [
+                "rail",
+                "train"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "order_status",
+          "type": "select",
+          "param": "orderStatus",
+          "label": "Order Status",
+          "options": [
+            {
+              "value": "Booked",
+              "synonyms": [
+                "booked",
+                "booking"
+              ]
+            },
+            {
+              "value": "Confirmed",
+              "synonyms": [
+                "confirmed"
+              ]
+            },
+            {
+              "value": "In Transit",
+              "synonyms": [
+                "in transit",
+                "in-transit",
+                "transit",
+                "shipping",
+                "shipped",
+                "on the way",
+                "sailing"
+              ]
+            },
+            {
+              "value": "Delivered",
+              "synonyms": [
+                "delivered",
+                "arrived",
+                "received",
+                "completed"
+              ]
+            },
+            {
+              "value": "Cancelled",
+              "synonyms": [
+                "cancelled",
+                "canceled",
+                "void"
+              ]
+            },
+            {
+              "value": "Pending",
+              "synonyms": [
+                "pending",
+                "waiting",
+                "draft"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "priority",
+          "type": "radio",
+          "param": "priority",
+          "label": "Priority",
+          "options": [
+            {
+              "value": "Low",
+              "synonyms": [
+                "low",
+                "low priority",
+                "lowest"
+              ]
+            },
+            {
+              "value": "Medium",
+              "synonyms": [
+                "medium",
+                "medium priority",
+                "normal priority",
+                "mid"
+              ]
+            },
+            {
+              "value": "High",
+              "synonyms": [
+                "high",
+                "high priority",
+                "urgent",
+                "critical",
+                "starred",
+                "favorite"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "commercial_invoices_only",
+          "type": "checkbox",
+          "param": "commercial_invoices_only",
+          "label": "Commercial invoice only",
+          "shortLabel": "commercial invoice",
+          "field": "commercialInvoices",
+          "onWords": [
+            "commercial invoice",
+            "commercial invoices",
+            "invoice attached",
+            "with invoices"
+          ],
+          "offWords": [
+            "without invoices",
+            "no invoice"
+          ]
+        },
+        {
+          "id": "range",
+          "type": "daterange",
+          "paramFrom": "date_from",
+          "paramTo": "date_to",
+          "label": "Date Range",
+          "field": "orderDate"
+        }
+      ],
+      "columns": [
+        {
+          "key": "orderNo",
+          "label": "Order #",
+          "type": "bold"
+        },
+        {
+          "key": "transportMode",
+          "label": "Mode",
+          "type": "badge"
+        },
+        {
+          "key": "orderStatus",
+          "label": "Status",
+          "type": "badge"
+        },
+        {
+          "key": "supplier",
+          "label": "Supplier"
+        },
+        {
+          "key": "loadPort",
+          "label": "Load Port"
+        },
+        {
+          "key": "dischargePort",
+          "label": "Discharge Port"
+        },
+        {
+          "key": "priority",
+          "label": "Priority",
+          "type": "badge"
+        },
+        {
+          "key": "eta",
+          "label": "ETA",
+          "align": "right",
+          "type": "date"
+        }
+      ],
+      "speak_template": "Order {orderNo} from supplier {supplier}. Transport mode {transportMode}, status {orderStatus}, loading from {loadPort} to {dischargePort} with ETA {eta}."
+    },
+    {
+      "key": "quotes",
+      "prefix": "quote",
+      "title": "Quotations & Pricing",
+      "subtitle": "Search and filter freight rate quotations, follow-up deadlines, and multi-modal pricing.",
+      "route": "/quotation/quote",
+      "navIcon": "calculator",
+      "noun": "quotes",
+      "collection": "quotes",
+      "endpoint": "/quotation/quote/search",
+      "aliases": [
+        "quote",
+        "quotes",
+        "quotation",
+        "quotations",
+        "rate quote",
+        "rates",
+        "pricing",
+        "tariff",
+        "tariffs",
+        "estimate",
+        "estimates",
+        "rate quotes"
+      ],
+      "searchPlaceholder": "Search by quote #, company, origin, or destination\u2026",
+      "hints": [
+        "Show offered quotes"
+      ],
+      "controls": [
+        {
+          "id": "q",
+          "type": "text",
+          "param": "q",
+          "label": "Keyword",
+          "idPrefix": "QUO-",
+          "idRegex": "(?:quo|quote)[-\\s]?(\\d{3,})|quote(?:\\s+number)?[\\s#]+(\\d{3,})",
+          "searchFields": [
+            "quoteNumber",
+            "customerName",
+            "originAddress",
+            "destinationAddress",
+            "portOfLoadingName",
+            "portOfDischargeName",
+            "originZipCode",
+            "destinationZipCode"
+          ],
+          "prefixWords": [
+            "keyword",
+            "quote",
+            "quotation",
+            "number",
+            "customer",
+            "company",
+            "origin",
+            "destination"
+          ]
+        },
+        {
+          "id": "workflow_status",
+          "type": "select",
+          "param": "workflowStatusCode",
+          "label": "Workflow Status",
+          "options": [
+            {
+              "value": "INQUIRE",
+              "synonyms": [
+                "inquire",
+                "inquiry",
+                "new quote",
+                "inquiries",
+                "requested"
+              ]
+            },
+            {
+              "value": "OFFERED",
+              "synonyms": [
+                "offered",
+                "offer",
+                "sent",
+                "proposal sent",
+                "submitted"
+              ]
+            },
+            {
+              "value": "WON",
+              "synonyms": [
+                "won",
+                "accepted",
+                "approved",
+                "closed won",
+                "win"
+              ]
+            },
+            {
+              "value": "LOST",
+              "synonyms": [
+                "lost",
+                "declined",
+                "rejected",
+                "closed lost"
+              ]
+            },
+            {
+              "value": "BOOKED",
+              "synonyms": [
+                "booked",
+                "booking created",
+                "converted to booking"
+              ]
+            },
+            {
+              "value": "HANDOVER",
+              "synonyms": [
+                "handover",
+                "handed over",
+                "operations handover"
+              ]
+            },
+            {
+              "value": "FOLLOWUP",
+              "synonyms": [
+                "followup",
+                "follow up",
+                "follow-up",
+                "needs followup"
+              ]
+            },
+            {
+              "value": "OVERDUE",
+              "synonyms": [
+                "overdue",
+                "expired",
+                "late"
+              ]
+            },
+            {
+              "value": "DUETODAY",
+              "synonyms": [
+                "due today",
+                "today",
+                "due now"
+              ]
+            },
+            {
+              "value": "UPCOMING",
+              "synonyms": [
+                "upcoming",
+                "due soon",
+                "future"
+              ]
+            },
+            {
+              "value": "REOPEN",
+              "synonyms": [
+                "reopen",
+                "reopened"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "transport_mode",
+          "type": "select",
+          "param": "transportModeId",
+          "label": "Transport Mode",
+          "options": [
+            {
+              "value": "Sea",
+              "synonyms": [
+                "sea",
+                "ocean",
+                "ocean freight",
+                "maritime",
+                "vessel",
+                "by sea"
+              ]
+            },
+            {
+              "value": "Air",
+              "synonyms": [
+                "air",
+                "flight",
+                "air freight",
+                "by air"
+              ]
+            },
+            {
+              "value": "Road",
+              "synonyms": [
+                "road",
+                "truck",
+                "trucking",
+                "land"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "assigned_to",
+          "type": "text",
+          "param": "customAssignedTo",
+          "label": "Assigned To",
+          "searchFields": [
+            "customAssignedTo",
+            "createdByUserName"
+          ],
+          "prefixWords": [
+            "assigned to",
+            "assignee",
+            "owner",
+            "sales rep"
+          ]
+        },
+        {
+          "id": "is_warehouse_quote",
+          "type": "checkbox",
+          "param": "isWarehouseQuote",
+          "label": "Warehouse Quote",
+          "shortLabel": "warehouse",
+          "field": "isWarehouseQuote",
+          "onWords": [
+            "warehouse quote",
+            "warehouse quotes",
+            "warehouse",
+            "storage quote"
+          ],
+          "offWords": [
+            "freight quote",
+            "non-warehouse",
+            "regular quote"
+          ]
+        },
+        {
+          "id": "range",
+          "type": "daterange",
+          "paramFrom": "date_from",
+          "paramTo": "date_to",
+          "label": "Due Date Range",
+          "field": "followDate"
+        }
+      ],
+      "columns": [
+        {
+          "key": "quoteNumber",
+          "label": "Quote #",
+          "type": "bold"
+        },
+        {
+          "key": "customerName",
+          "label": "Company Name"
+        },
+        {
+          "key": "workflowStatusCode",
+          "label": "Status",
+          "type": "badge"
+        },
+        {
+          "key": "customOriginDestination",
+          "label": "Origin - Destination"
+        },
+        {
+          "key": "amount",
+          "label": "Amount",
+          "align": "right",
+          "type": "currency"
+        },
+        {
+          "key": "customAssignedTo",
+          "label": "Assigned To"
+        },
+        {
+          "key": "followDate",
+          "label": "Due Date",
+          "align": "right",
+          "type": "date"
+        }
+      ],
+      "speak_template": "Quotation {quoteNumber} for company {customerName}. Status {workflowStatusCode}, amount {amount} dollars. Due on {followDate}, assigned to {customAssignedTo}.",
+      "prompt": "Quotations and Pricing search page (/quotation/quote). Filter quotations by quote number (QUO-), workflow status (INQUIRE, OFFERED, WON, LOST, BOOKED, HANDOVER, FOLLOWUP, OVERDUE, DUETODAY, UPCOMING, REOPEN), transport mode (Sea, Air, Road), assigned sales representative, warehouse quote toggle, and follow-up date ranges."
+    },
+    {
+      "key": "shipments",
+      "prefix": "shipment",
+      "title": "Shipment Tracking",
+      "subtitle": "Monitor active freight shipments, carrier movements, containers, and customs clearances.",
+      "route": "/forwarding/shipments",
+      "navIcon": "package",
+      "noun": "shipments",
+      "collection": "shipments",
+      "endpoint": "/forwarding/shipments/search",
+      "aliases": [
+        "shipment",
+        "shipments",
+        "shipment tracking",
+        "tracking",
+        "freight",
+        "cargo",
+        "consignments",
+        "containers",
+        "container"
+      ],
+      "searchPlaceholder": "Search by shipment #, container #, house bill, or consignee\u2026",
+      "hints": [
+        "Show ocean shipments"
+      ],
+      "controls": [
+        {
+          "id": "q",
+          "type": "text",
+          "param": "q",
+          "label": "Keyword",
+          "idPrefix": "SHP-",
+          "idRegex": "shp[-\\s]?(\\d{3,})|shipment(?:\\s+number)?[\\s#]+(\\d{3,})|([a-zA-Z]{4}\\d{7})",
+          "searchFields": [
+            "shipmentNo",
+            "containerNo",
+            "houseBillNo",
+            "shipper",
+            "consignee",
+            "origin",
+            "destination"
+          ],
+          "prefixWords": [
+            "keyword",
+            "shipment",
+            "container",
+            "house bill",
+            "bl",
+            "shipper",
+            "consignee"
+          ]
+        },
+        {
+          "id": "transport_mode",
+          "type": "select",
+          "param": "transportMode",
+          "label": "Transport Mode",
+          "options": [
+            {
+              "value": "Sea",
+              "synonyms": [
+                "sea",
+                "ocean",
+                "vessel",
+                "maritime"
+              ]
+            },
+            {
+              "value": "Air",
+              "synonyms": [
+                "air",
+                "flight",
+                "plane"
+              ]
+            },
+            {
+              "value": "Road",
+              "synonyms": [
+                "road",
+                "truck",
+                "trucking"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "shipment_status",
+          "type": "select",
+          "param": "shipmentStatus",
+          "label": "Shipment Status",
+          "options": [
+            {
+              "value": "Booked",
+              "synonyms": [
+                "booked"
+              ]
+            },
+            {
+              "value": "In Transit",
+              "synonyms": [
+                "in transit",
+                "in-transit",
+                "sailing",
+                "flying"
+              ]
+            },
+            {
+              "value": "Customs Cleared",
+              "synonyms": [
+                "customs cleared",
+                "cleared",
+                "customs"
+              ]
+            },
+            {
+              "value": "Arrived",
+              "synonyms": [
+                "arrived",
+                "at port",
+                "at destination"
+              ]
+            },
+            {
+              "value": "Delivered",
+              "synonyms": [
+                "delivered",
+                "completed"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "exceptions_only",
+          "type": "checkbox",
+          "param": "isExceptionApplicable",
+          "label": "Exceptions only",
+          "shortLabel": "exceptions",
+          "field": "isExceptionApplicable",
+          "onWords": [
+            "exception",
+            "exceptions",
+            "delayed",
+            "issue",
+            "problem",
+            "hold"
+          ],
+          "offWords": [
+            "normal",
+            "on time",
+            "clear"
+          ]
+        },
+        {
+          "id": "range",
+          "type": "daterange",
+          "paramFrom": "date_from",
+          "paramTo": "date_to",
+          "label": "ETA Range",
+          "field": "eta"
+        }
+      ],
+      "columns": [
+        {
+          "key": "shipmentNo",
+          "label": "Shipment #",
+          "type": "bold"
+        },
+        {
+          "key": "transportMode",
+          "label": "Mode",
+          "type": "badge"
+        },
+        {
+          "key": "shipmentStatus",
+          "label": "Status",
+          "type": "badge"
+        },
+        {
+          "key": "shipper",
+          "label": "Shipper"
+        },
+        {
+          "key": "consignee",
+          "label": "Consignee"
+        },
+        {
+          "key": "origin",
+          "label": "Origin"
+        },
+        {
+          "key": "destination",
+          "label": "Destination"
+        },
+        {
+          "key": "eta",
+          "label": "ETA",
+          "align": "right",
+          "type": "date"
+        }
+      ],
+      "speak_template": "Shipment {shipmentNo} for consignee {consignee}. Transport mode {transportMode} from {origin} to {destination}. Status {shipmentStatus}, ETA {eta}.",
+      "prompt": "Shipment Tracking page (/forwarding/shipments). Search and filter container shipments by container number, status, transport mode, active exception alerts, and estimated arrival date."
+    },
+    {
+      "key": "incidents",
+      "prefix": "incident",
+      "title": "Incident Management",
+      "subtitle": "Track cargo damage tickets, transit delays, service exceptions, and dispute claims.",
+      "route": "/incident/incidents",
+      "navIcon": "alert",
+      "noun": "incidents",
+      "collection": "incidents",
+      "endpoint": "/incident/incidents/search",
+      "aliases": [
+        "incident",
+        "incidents",
+        "claims",
+        "damages",
+        "cargo damage",
+        "disputes",
+        "complaints",
+        "exceptions",
+        "tickets"
+      ],
+      "searchPlaceholder": "Search by incident #, shipment #, customer, or category\u2026",
+      "hints": [
+        "Show open incidents"
+      ],
+      "controls": [
+        {
+          "id": "q",
+          "type": "text",
+          "param": "q",
+          "label": "Keyword",
+          "idPrefix": "INC-",
+          "idRegex": "inc[-\\s]?(\\d{3,})|incident(?:\\s+number)?[\\s#]+(\\d{3,})",
+          "searchFields": [
+            "incidentRequestNumber",
+            "requestNumber",
+            "customerName",
+            "shipmentNo",
+            "description"
+          ],
+          "prefixWords": [
+            "keyword",
+            "incident",
+            "ticket",
+            "claim",
+            "damage",
+            "customer",
+            "shipment"
+          ]
+        },
+        {
+          "id": "status",
+          "type": "select",
+          "param": "status",
+          "label": "Status",
+          "options": [
+            {
+              "value": "Open",
+              "synonyms": [
+                "open",
+                "new",
+                "unresolved",
+                "active"
+              ]
+            },
+            {
+              "value": "Under Investigation",
+              "synonyms": [
+                "investigation",
+                "investigating",
+                "in progress"
+              ]
+            },
+            {
+              "value": "Resolved",
+              "synonyms": [
+                "resolved",
+                "settled",
+                "fixed"
+              ]
+            },
+            {
+              "value": "Closed",
+              "synonyms": [
+                "closed",
+                "completed"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "category",
+          "type": "select",
+          "param": "categoryName",
+          "label": "Category",
+          "options": [
+            {
+              "value": "Damage",
+              "synonyms": [
+                "damage",
+                "cargo damage",
+                "broken"
+              ]
+            },
+            {
+              "value": "Delay",
+              "synonyms": [
+                "delay",
+                "late delivery",
+                "delayed"
+              ]
+            },
+            {
+              "value": "Loss",
+              "synonyms": [
+                "loss",
+                "missing cargo",
+                "lost"
+              ]
+            },
+            {
+              "value": "Temperature",
+              "synonyms": [
+                "temperature",
+                "temperature excursion",
+                "cold chain"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "range",
+          "type": "daterange",
+          "paramFrom": "date_from",
+          "paramTo": "date_to",
+          "label": "Incident Date",
+          "field": "incidentDate"
+        }
+      ],
+      "columns": [
+        {
+          "key": "incidentRequestNumber",
+          "label": "Incident #",
+          "type": "bold"
+        },
+        {
+          "key": "categoryName",
+          "label": "Category",
+          "type": "badge"
+        },
+        {
+          "key": "customerName",
+          "label": "Customer"
+        },
+        {
+          "key": "shipmentNo",
+          "label": "Shipment #"
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "badge"
+        },
+        {
+          "key": "incidentDate",
+          "label": "Date",
+          "align": "right",
+          "type": "date"
+        }
+      ],
+      "speak_template": "Incident {incidentRequestNumber} category {categoryName} for customer {customerName}. Linked to shipment {shipmentNo}. Status {status}, reported on {incidentDate}.",
+      "prompt": "Incident Management page (/incident/incidents). Search and filter incidents by category, priority, status, and reported date."
+    },
+    {
+      "key": "customers",
+      "prefix": "customer",
+      "title": "CRM Customers & Accounts",
+      "subtitle": "Manage enterprise clients, target partner accounts, and regional business relationships.",
+      "route": "/crm/companies",
+      "navIcon": "building",
+      "noun": "customers",
+      "collection": "target_customers",
+      "endpoint": "/crm/companies/search",
+      "aliases": [
+        "customer",
+        "customers",
+        "client",
+        "clients",
+        "accounts",
+        "companies",
+        "crm",
+        "crm customers",
+        "prospects",
+        "leads"
+      ],
+      "searchPlaceholder": "Search by company name, country, customer ID, or owner\u2026",
+      "hints": [
+        "Show active customers"
+      ],
+      "controls": [
+        {
+          "id": "q",
+          "type": "text",
+          "param": "q",
+          "label": "Keyword",
+          "idPrefix": "CUST-",
+          "idRegex": "cust[-\\s]?(\\d{3,})|customer(?:\\s+number)?[\\s#]+(\\d{3,})",
+          "searchFields": [
+            "companyName",
+            "customerId",
+            "countryName",
+            "ownerName"
+          ],
+          "prefixWords": [
+            "keyword",
+            "customer",
+            "company",
+            "account",
+            "client"
+          ]
+        },
+        {
+          "id": "status",
+          "type": "select",
+          "param": "customerStatusName",
+          "label": "Status",
+          "options": [
+            {
+              "value": "Active",
+              "synonyms": [
+                "active",
+                "existing customer"
+              ]
+            },
+            {
+              "value": "Prospect",
+              "synonyms": [
+                "prospect",
+                "potential"
+              ]
+            },
+            {
+              "value": "Lead",
+              "synonyms": [
+                "lead",
+                "new lead"
+              ]
+            },
+            {
+              "value": "Inactive",
+              "synonyms": [
+                "inactive",
+                "dormant"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "customer_type",
+          "type": "select",
+          "param": "customerType",
+          "label": "Customer Type",
+          "options": [
+            {
+              "value": "Shipper",
+              "synonyms": [
+                "shipper",
+                "exporter"
+              ]
+            },
+            {
+              "value": "Consignee",
+              "synonyms": [
+                "consignee",
+                "importer"
+              ]
+            },
+            {
+              "value": "Forwarder",
+              "synonyms": [
+                "forwarder",
+                "freight forwarder"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "assigned_only",
+          "type": "checkbox",
+          "param": "salesPersonAssigned",
+          "label": "Assigned rep only",
+          "shortLabel": "assigned",
+          "field": "salesPersonAssigned",
+          "onWords": [
+            "assigned",
+            "has owner",
+            "with rep"
+          ],
+          "offWords": [
+            "unassigned",
+            "no owner"
+          ]
+        }
+      ],
+      "columns": [
+        {
+          "key": "companyName",
+          "label": "Company Name",
+          "type": "bold"
+        },
+        {
+          "key": "customerType",
+          "label": "Type"
+        },
+        {
+          "key": "customerStatusName",
+          "label": "Status",
+          "type": "badge"
+        },
+        {
+          "key": "countryName",
+          "label": "Country"
+        },
+        {
+          "key": "ownerName",
+          "label": "Owner"
+        },
+        {
+          "key": "region",
+          "label": "Region"
+        }
+      ],
+      "speak_template": "Customer {companyName}, type {customerType} in {countryName}. Status {customerStatusName}, account managed by {ownerName}.",
+      "prompt": "CRM Companies and Customers page (/crm/companies). Search and filter target accounts, customer status, and account owners."
+    },
+    {
+      "key": "activities",
+      "prefix": "activity",
+      "title": "CRM Tasks & Activities",
+      "subtitle": "Track client calls, sales meetings, follow-ups, and team tasks.",
+      "route": "/crm/activities",
+      "navIcon": "calendar",
+      "noun": "activities",
+      "collection": "tc_tasks",
+      "endpoint": "/crm/activities/search",
+      "aliases": [
+        "activity",
+        "activities",
+        "tasks",
+        "crm tasks",
+        "followups",
+        "sales tasks",
+        "to-dos"
+      ],
+      "searchPlaceholder": "Search by title, company, or assignee\u2026",
+      "hints": [
+        "Show high priority tasks"
+      ],
+      "controls": [
+        {
+          "id": "q",
+          "type": "text",
+          "param": "q",
+          "label": "Keyword",
+          "idPrefix": "TSK-",
+          "idRegex": "tsk[-\\s]?(\\d{3,})|task(?:\\s+number)?[\\s#]+(\\d{3,})",
+          "searchFields": [
+            "title",
+            "companyName",
+            "assignedToUserName"
+          ],
+          "prefixWords": [
+            "task",
+            "activity",
+            "title"
+          ]
+        },
+        {
+          "id": "priority",
+          "type": "radio",
+          "param": "priorityName",
+          "label": "Priority",
+          "options": [
+            {
+              "value": "Low",
+              "synonyms": [
+                "low"
+              ]
+            },
+            {
+              "value": "Medium",
+              "synonyms": [
+                "medium",
+                "normal"
+              ]
+            },
+            {
+              "value": "High",
+              "synonyms": [
+                "high",
+                "urgent"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "activity_type",
+          "type": "select",
+          "param": "typeName",
+          "label": "Activity Type",
+          "options": [
+            {
+              "value": "Call",
+              "synonyms": [
+                "call",
+                "phone call"
+              ]
+            },
+            {
+              "value": "Meeting",
+              "synonyms": [
+                "meeting",
+                "appointment",
+                "demo"
+              ]
+            },
+            {
+              "value": "Email",
+              "synonyms": [
+                "email",
+                "message"
+              ]
+            },
+            {
+              "value": "Follow-up",
+              "synonyms": [
+                "follow up",
+                "followup"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "range",
+          "type": "daterange",
+          "paramFrom": "date_from",
+          "paramTo": "date_to",
+          "label": "Due Date Range",
+          "field": "dueDate"
+        }
+      ],
+      "columns": [
+        {
+          "key": "title",
+          "label": "Activity / Task",
+          "type": "bold"
+        },
+        {
+          "key": "companyName",
+          "label": "Company"
+        },
+        {
+          "key": "typeName",
+          "label": "Type",
+          "type": "badge"
+        },
+        {
+          "key": "priorityName",
+          "label": "Priority",
+          "type": "badge"
+        },
+        {
+          "key": "assignedToUserName",
+          "label": "Assigned To"
+        },
+        {
+          "key": "dueDate",
+          "label": "Due Date",
+          "align": "right",
+          "type": "date"
+        }
+      ],
+      "speak_template": "Activity {title} for company {companyName}. Type {typeName}, priority {priorityName}, assigned to {assignedToUserName}, due on {dueDate}."
+    },
+    {
+      "key": "products",
+      "prefix": "product",
+      "title": "Product Catalog",
+      "subtitle": "Search and manage product SKUs, brand catalogs, and HTS customs classifications.",
+      "route": "/fcp/product",
+      "navIcon": "package",
+      "noun": "products",
+      "collection": "products",
+      "endpoint": "/fcp/product/search",
+      "aliases": [
+        "product",
+        "products",
+        "sku",
+        "skus",
+        "catalog",
+        "merchandise",
+        "items",
+        "fcp products"
+      ],
+      "searchPlaceholder": "Search by SKU label, vendor SKU, brand, or HTS code\u2026",
+      "hints": [
+        "Show products with brand Nike"
+      ],
+      "controls": [
+        {
+          "id": "q",
+          "type": "text",
+          "param": "q",
+          "label": "Keyword",
+          "idPrefix": "SKU-",
+          "idRegex": "\\bsku[-\\s]?(\\d{3,})|product(?:\\s+number)?[\\s#]+(\\d{3,})",
+          "searchFields": [
+            "skuLabel",
+            "vendorSku",
+            "brandName",
+            "vendorName",
+            "htsCode"
+          ],
+          "prefixWords": [
+            "keyword",
+            "sku",
+            "product",
+            "brand",
+            "hts"
+          ]
+        },
+        {
+          "id": "brand",
+          "type": "select",
+          "param": "brandName",
+          "label": "Brand",
+          "options": [
+            {
+              "value": "Nike"
+            },
+            {
+              "value": "Adidas"
+            },
+            {
+              "value": "Samsung"
+            },
+            {
+              "value": "Apple"
+            },
+            {
+              "value": "Generic"
+            }
+          ]
+        }
+      ],
+      "columns": [
+        {
+          "key": "skuLabel",
+          "label": "SKU Label",
+          "type": "bold"
+        },
+        {
+          "key": "vendorSku",
+          "label": "Vendor SKU"
+        },
+        {
+          "key": "brandName",
+          "label": "Brand"
+        },
+        {
+          "key": "vendorName",
+          "label": "Vendor"
+        },
+        {
+          "key": "defaultCost",
+          "label": "Cost",
+          "align": "right",
+          "type": "currency"
+        },
+        {
+          "key": "htsCode",
+          "label": "HTS Code"
+        }
+      ],
+      "speak_template": "Product {skuLabel} with vendor SKU {vendorSku}. Brand {brandName}, vendor {vendorName}, default cost {defaultCost} dollars, HTS classification {htsCode}."
+    },
+    {
+      "key": "yard",
+      "prefix": "yard",
+      "title": "Yard & Dock Appointments",
+      "subtitle": "Schedule and manage gate arrivals, dock loading slots, and trailer parking.",
+      "route": "/yard-mgmt/yard-appointment-request",
+      "navIcon": "clock",
+      "noun": "appointments",
+      "collection": "yard_appointments",
+      "endpoint": "/yard-mgmt/appointments/search",
+      "aliases": [
+        "yard",
+        "yard management",
+        "dock",
+        "docks",
+        "appointment",
+        "appointments",
+        "gate",
+        "check-in",
+        "warehouse slots"
+      ],
+      "searchPlaceholder": "Search by appointment #, carrier, vehicle, or dock\u2026",
+      "hints": [
+        "Show scheduled appointments"
+      ],
+      "controls": [
+        {
+          "id": "q",
+          "type": "text",
+          "param": "q",
+          "label": "Keyword",
+          "idPrefix": "YRD-",
+          "idRegex": "yrd[-\\s]?(\\d{3,})|appointment(?:\\s+number)?[\\s#]+(\\d{3,})",
+          "searchFields": [
+            "appointmentNo",
+            "carrierName",
+            "vehicleNumber"
+          ],
+          "prefixWords": [
+            "appointment",
+            "carrier",
+            "vehicle",
+            "dock"
+          ]
+        },
+        {
+          "id": "status",
+          "type": "select",
+          "param": "status",
+          "label": "Status",
+          "options": [
+            {
+              "value": "Scheduled",
+              "synonyms": [
+                "scheduled",
+                "booked"
+              ]
+            },
+            {
+              "value": "Checked In",
+              "synonyms": [
+                "checked in",
+                "at gate"
+              ]
+            },
+            {
+              "value": "Docked In",
+              "synonyms": [
+                "docked",
+                "at dock",
+                "loading"
+              ]
+            },
+            {
+              "value": "Completed",
+              "synonyms": [
+                "completed",
+                "departed"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "operation",
+          "type": "select",
+          "param": "operationType",
+          "label": "Operation",
+          "options": [
+            {
+              "value": "Inbound",
+              "synonyms": [
+                "inbound",
+                "receiving",
+                "unload"
+              ]
+            },
+            {
+              "value": "Outbound",
+              "synonyms": [
+                "outbound",
+                "shipping",
+                "load"
+              ]
+            }
+          ]
+        }
+      ],
+      "columns": [
+        {
+          "key": "appointmentNo",
+          "label": "Appointment #",
+          "type": "bold"
+        },
+        {
+          "key": "operationType",
+          "label": "Operation",
+          "type": "badge"
+        },
+        {
+          "key": "carrierName",
+          "label": "Carrier"
+        },
+        {
+          "key": "vehicleNumber",
+          "label": "Vehicle"
+        },
+        {
+          "key": "dockNumber",
+          "label": "Dock #"
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "badge"
+        }
+      ],
+      "speak_template": "Yard appointment {appointmentNo} for carrier {carrierName}, vehicle {vehicleNumber}. Operation {operationType} at dock {dockNumber}, status {status}."
+    },
+    {
+      "key": "dashboard",
+      "prefix": "dsh",
+      "title": "Operations Dashboard",
+      "subtitle": "Overview of shipment transit performance, delivery rates, and risk exceptions.",
+      "route": "/dashboard/overview",
+      "navIcon": "chart",
+      "noun": "metrics",
+      "collection": "dashboard_metrics",
+      "endpoint": "/dashboard/overview",
+      "aliases": [
+        "dashboard",
+        "overview",
+        "analytics",
+        "operations dashboard",
+        "performance",
+        "metrics",
+        "transit insights"
+      ],
+      "searchPlaceholder": "Search dashboard metrics or key indicators\u2026",
+      "hints": [
+        "Show delivery performance"
+      ],
+      "controls": [
+        {
+          "id": "mode",
+          "type": "select",
+          "param": "mode",
+          "label": "Transport Mode",
+          "options": [
+            {
+              "value": "All",
+              "synonyms": [
+                "all modes",
+                "everything"
+              ]
+            },
+            {
+              "value": "Ocean",
+              "synonyms": [
+                "ocean",
+                "sea"
+              ]
+            },
+            {
+              "value": "Air",
+              "synonyms": [
+                "air",
+                "flight"
+              ]
+            },
+            {
+              "value": "Road",
+              "synonyms": [
+                "road",
+                "truck"
+              ]
+            }
+          ]
+        }
+      ],
+      "columns": [
+        {
+          "key": "metric_name",
+          "label": "Metric",
+          "type": "bold"
+        },
+        {
+          "key": "value",
+          "label": "Current Value",
+          "type": "badge"
+        },
+        {
+          "key": "trend",
+          "label": "Trend"
+        },
+        {
+          "key": "target",
+          "label": "Target Benchmark"
+        }
+      ],
+      "speak_template": "Dashboard metric {metric_name} is currently {value} with a trend of {trend}."
+    },
+    {
+      "key": "users",
+      "prefix": "user",
+      "title": "User Management",
+      "subtitle": "Manage company user credentials, role permissions, and access policies.",
+      "route": "/uam/users",
+      "navIcon": "users",
+      "noun": "users",
+      "collection": "users",
+      "endpoint": "/uam/users/search",
+      "aliases": [
+        "users",
+        "user",
+        "user management",
+        "uam",
+        "iam",
+        "accounts",
+        "team",
+        "logins"
+      ],
+      "searchPlaceholder": "Search by user name, username, email, or role\u2026",
+      "hints": [
+        "Show active users"
+      ],
+      "controls": [
+        {
+          "id": "q",
+          "type": "text",
+          "param": "q",
+          "label": "Keyword",
+          "idPrefix": "USR-",
+          "idRegex": "usr[-\\s]?(\\d{3,})|user(?:\\s+number)?[\\s#]+(\\d{3,})",
+          "searchFields": [
+            "username",
+            "firstName",
+            "lastName",
+            "email"
+          ],
+          "prefixWords": [
+            "user",
+            "username",
+            "name",
+            "email"
+          ]
+        },
+        {
+          "id": "status",
+          "type": "select",
+          "param": "status",
+          "label": "Status",
+          "options": [
+            {
+              "value": "Active",
+              "synonyms": [
+                "active",
+                "enabled"
+              ]
+            },
+            {
+              "value": "Inactive",
+              "synonyms": [
+                "inactive",
+                "disabled"
+              ]
+            }
+          ]
+        }
+      ],
+      "columns": [
+        {
+          "key": "username",
+          "label": "Username",
+          "type": "bold"
+        },
+        {
+          "key": "fullName",
+          "label": "Name"
+        },
+        {
+          "key": "email",
+          "label": "Email"
+        },
+        {
+          "key": "phoneNumber",
+          "label": "Phone"
+        },
+        {
+          "key": "roleName",
+          "label": "Role",
+          "type": "badge"
+        }
+      ],
+      "speak_template": "User {fullName}, username {username}, email {email}. Assigned role is {roleName}."
+    }
+]

@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live Avatar Web Component Demo (Built Distribution)</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f1f5f9;
+      color: #0f172a;
+      padding: 24px;
+    }
+    .container {
+      max-width: 1000px;
+      margin: 0 auto;
+      background: #ffffff;
+      border-radius: 12px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+      overflow: hidden;
+      border: 1px solid #e2e8f0;
+    }
+    header {
+      padding: 20px 24px;
+      background: #1e293b;
+      color: #ffffff;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .badge-framework {
+      background: #3b82f6;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 20px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    nav {
+      display: flex;
+      border-bottom: 1px solid #e2e8f0;
+      background: #f8fafc;
+    }
+    nav button {
+      padding: 12px 24px;
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      font-size: 14px;
+      font-weight: 600;
+      color: #64748b;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    nav button.active {
+      color: #2563eb;
+      border-bottom-color: #2563eb;
+      background: #ffffff;
+    }
+    .content {
+      padding: 24px;
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      gap: 24px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 12px;
+      font-size: 13px;
+    }
+    th, td {
+      padding: 10px 12px;
+      text-align: left;
+      border-bottom: 1px solid #e2e8f0;
+    }
+    th {
+      background: #f8fafc;
+      color: #475569;
+      font-weight: 600;
+    }
+    .status-badge {
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .status-delivered { background: #dcfce7; color: #15803d; }
+    .status-pending { background: #fef9c3; color: #854d0e; }
+    .status-shipped { background: #dbeafe; color: #1d4ed8; }
+    .priority-high { color: #dc2626; font-weight: 700; }
+    .priority-medium { color: #d97706; font-weight: 600; }
+    .priority-low { color: #65a30d; font-weight: 500; }
+    .sidebar {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .event-log {
+      height: 200px;
+      overflow-y: auto;
+      background: #0f172a;
+      color: #38bdf8;
+      font-family: monospace;
+      font-size: 11px;
+      padding: 10px;
+      border-radius: 6px;
+      white-space: pre-wrap;
+    }
+    .btn-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .btn {
+      padding: 8px 12px;
+      background: #2563eb;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .btn:hover { background: #1d4ed8; }
+    .btn-secondary { background: #64748b; }
+    .btn-secondary:hover { background: #475569; }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <header>
+      <div>
+        <h2>Enterprise Order Management</h2>
+        <p style="font-size: 13px; color: #94a3b8; margin-top: 4px;">Host Application (Simulating Angular / ASP.NET / MAUI / React)</p>
+      </div>
+      <span class="badge-framework">&lt;live-avatar-popup&gt; Built UMD</span>
+    </header>
+
+    <nav>
+      <button id="tab-orders" class="active" onclick="switchTab('orders')">Orders Search</button>
+      <button id="tab-items" onclick="switchTab('items')">Items Search</button>
+    </nav>
+
+    <div class="content">
+      <div>
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h3 id="table-title">Orders Search</h3>
+          <span id="active-filter" style="font-size: 12px; color: #2563eb; font-weight: 600;">All records</span>
+        </div>
+
+        <table id="data-table">
+          <thead>
+            <tr id="table-headers">
+              <th>Order ID</th>
+              <th>Customer</th>
+              <th>Status</th>
+              <th>Priority</th>
+              <th>Amount</th>
+            </tr>
+          </thead>
+          <tbody id="table-body"></tbody>
+        </table>
+      </div>
+
+      <div class="sidebar">
+        <div>
+          <h4 style="font-size: 13px; margin-bottom: 8px;">Avatar Component Event Log</h4>
+          <div id="log" class="event-log">// Component events will appear here...</div>
+        </div>
+
+        <div>
+          <h4 style="font-size: 13px; margin-bottom: 8px;">Host Application Actions</h4>
+          <div class="btn-group">
+            <button class="btn" onclick="avatar.open()">Open Avatar Popup</button>
+            <button class="btn btn-secondary" onclick="avatar.sendCommand('show high priority orders')">Voice/Text: "Show high priority orders"</button>
+            <button class="btn btn-secondary" onclick="avatar.sendCommand('read top order')">Voice/Text: "Read top order"</button>
+            <button class="btn btn-secondary" onclick="avatar.sendCommand('go to items search')">Voice/Text: "Go to items search"</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- THE STANDALONE WEB COMPONENT -->
+  <live-avatar-popup
+    id="lisa-avatar"
+    api-url="http://localhost:8000"
+    current-route="/orders"
+    current-page="orders"
+    use-agent="true"
+    auto-turn="true">
+  </live-avatar-popup>
+
+  <!-- Load the built standalone UMD bundle (zero runtime dependencies) -->
+  <script src="../dist/live-avatar-popup.umd.js"></script>
+  <script>
+    const avatar = document.getElementById('lisa-avatar');
+    const logEl = document.getElementById('log');
+
+    function log(msg) {
+      const time = new Date().toLocaleTimeString();
+      logEl.textContent = `[${time}] ${msg}\n` + logEl.textContent;
+    }
+
+    const MOCK_ORDERS = [
+      { order_id: "ORD-9021", customer_name: "Apex Logistics", status: "Delivered", priority: "High", total_amount: 14200 },
+      { order_id: "ORD-9022", customer_name: "Zenith Retail", status: "Pending", priority: "Medium", total_amount: 5800 },
+      { order_id: "ORD-9023", customer_name: "Nova Health", status: "Shipped", priority: "Low", total_amount: 9340 },
+      { order_id: "ORD-9024", customer_name: "Quantum Corp", status: "Delivered", priority: "High", total_amount: 22100 },
+      { order_id: "ORD-9025", customer_name: "Starlight Supplies", status: "Pending", priority: "Low", total_amount: 3200 }
+    ];
+
+    const MOCK_ITEMS = [
+      { item_code: "ITM-101", item_name: "Industrial Laser Cutter", category: "Machinery", in_stock: true, unit_price: 18500 },
+      { item_code: "ITM-102", item_name: "Pneumatic Valve 3/4\"", category: "Parts", in_stock: true, unit_price: 240 },
+      { item_code: "ITM-103", item_name: "Thermal Sensor Array", category: "Electronics", in_stock: false, unit_price: 1200 },
+      { item_code: "ITM-104", item_name: "Hydraulic Pump 5HP", category: "Machinery", in_stock: true, unit_price: 6400 }
+    ];
+
+    let currentTab = 'orders';
+    let filteredOrders = [...MOCK_ORDERS];
+    let filteredItems = [...MOCK_ITEMS];
+
+    function renderTable() {
+      const tbody = document.getElementById('table-body');
+      const thead = document.getElementById('table-headers');
+      const title = document.getElementById('table-title');
+
+      if (currentTab === 'orders') {
+        title.textContent = "Orders Search";
+        thead.innerHTML = `
+          <th>Order ID</th>
+          <th>Customer</th>
+          <th>Status</th>
+          <th>Priority</th>
+          <th>Amount</th>
+        `;
+        tbody.innerHTML = filteredOrders.map(o => `
+          <tr>
+            <td><strong>${o.order_id}</strong></td>
+            <td>${o.customer_name}</td>
+            <td><span class="status-badge status-${o.status.toLowerCase()}">${o.status}</span></td>
+            <td class="priority-${o.priority.toLowerCase()}">${o.priority}</td>
+            <td>$${o.total_amount.toLocaleString()}</td>
+          </tr>
+        `).join('');
+
+        // Publish results to avatar so Lisa can read them!
+        avatar.publishResults('orders', filteredOrders);
+      } else {
+        title.textContent = "Items Search";
+        thead.innerHTML = `
+          <th>Item Code</th>
+          <th>Item Name</th>
+          <th>Category</th>
+          <th>Stock Status</th>
+          <th>Unit Price</th>
+        `;
+        tbody.innerHTML = filteredItems.map(i => `
+          <tr>
+            <td><strong>${i.item_code}</strong></td>
+            <td>${i.item_name}</td>
+            <td>${i.category}</td>
+            <td>${i.in_stock ? '<span class="status-badge status-delivered">In Stock</span>' : '<span class="status-badge priority-high">Out of Stock</span>'}</td>
+            <td>$${i.unit_price.toLocaleString()}</td>
+          </tr>
+        `).join('');
+
+        // Publish results to avatar
+        avatar.publishResults('items', filteredItems);
+      }
+    }
+
+    function switchTab(tab) {
+      currentTab = tab;
+      document.getElementById('tab-orders').className = tab === 'orders' ? 'active' : '';
+      document.getElementById('tab-items').className = tab === 'items' ? 'active' : '';
+      avatar.setCurrentRoute('/' + tab);
+      renderTable();
+      log(`Switched tab to: ${tab}`);
+    }
+
+    // =========================================================================
+    // Listen for Web Component CustomEvents
+    // =========================================================================
+
+    avatar.addEventListener('avatar-navigate', (e) => {
+      log(`EVENT avatar-navigate: ${JSON.stringify(e.detail)}`);
+      const target = e.detail.pageKey || (e.detail.route.includes('item') ? 'items' : 'orders');
+      switchTab(target);
+    });
+
+    avatar.addEventListener('avatar-filter', (e) => {
+      log(`EVENT avatar-filter: ${JSON.stringify(e.detail)}`);
+      const { filters, reset } = e.detail;
+      document.getElementById('active-filter').textContent = e.detail.message || "Filters applied";
+
+      if (currentTab === 'orders') {
+        if (reset) {
+          filteredOrders = [...MOCK_ORDERS];
+        } else {
+          filteredOrders = MOCK_ORDERS.filter(o => {
+            if (filters.status && o.status.toLowerCase() !== filters.status.toLowerCase()) return false;
+            if (filters.priority && o.priority.toLowerCase() !== filters.priority.toLowerCase()) return false;
+            if (filters.search && !o.customer_name.toLowerCase().includes(filters.search.toLowerCase()) && !o.order_id.toLowerCase().includes(filters.search.toLowerCase())) return false;
+            return true;
+          });
+        }
+      } else {
+        if (reset) {
+          filteredItems = [...MOCK_ITEMS];
+        } else {
+          filteredItems = MOCK_ITEMS.filter(i => {
+            if (filters.category && i.category.toLowerCase() !== filters.category.toLowerCase()) return false;
+            if (filters.in_stock !== undefined && i.in_stock !== filters.in_stock) return false;
+            return true;
+          });
+        }
+      }
+      renderTable();
+    });
+
+    avatar.addEventListener('avatar-read', (e) => {
+      log(`EVENT avatar-read: row #${e.detail.index}: ${e.detail.text}`);
+    });
+
+    avatar.addEventListener('avatar-status', (e) => {
+      log(`EVENT avatar-status: ${e.detail.status} (live: ${e.detail.isLive})`);
+    });
+
+    avatar.addEventListener('avatar-message', (e) => {
+      log(`EVENT avatar-message [${e.detail.role}]: "${e.detail.text}"`);
+    });
+
+    // Initial render
+    renderTable();
+  </script>
+</body>
+</html>
