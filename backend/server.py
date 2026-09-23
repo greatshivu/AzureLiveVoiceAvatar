@@ -1,9 +1,17 @@
 from fastapi import FastAPI, APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from azure.ai.voicelive.aio import connect, AgentSessionConfig
 from azure.identity.aio import ClientSecretCredential
+from pages_config import (
+    get_pages_config,
+    parse_command_internal,
+    execute_agent_tool,
+    execute_action,
+    GENERIC_ACTION_TOOL
+)
 import os
 import re
 import json
@@ -116,8 +124,10 @@ def _session_update(auto_turn: bool = True, use_agent: bool = True) -> dict:
             if auto_turn else None
         ),
     }
-    if not use_agent:
-        session["tools"] = []
+    # Azure Voice Live does not support configuring tools at runtime in Foundry Agent mode.
+    # When connecting to a Foundry Agent (FOUNDRY_AGENT_NAME), tools must be configured in the agent definition.
+    if not FOUNDRY_AGENT_NAME:
+        session["tools"] = [GENERIC_ACTION_TOOL]
     return {"type": "session.update", "session": session}
 
 
@@ -362,148 +372,6 @@ async def get_items(
 @api_router.websocket("/voice/ws")
 async def voice_ws(ws: WebSocket):
     await ws.accept()
-    if not voicelive_configured():
-        await ws.send_text(json.dumps({"type": "error", "error": {
-            "message": "Voice Live is not configured. Set VOICELIVE_ENDPOINT, FOUNDRY_PROJECT_NAME, "
-                       "FOUNDRY_AGENT_NAME (and FOUNDRY_AGENT_VERSION), plus Azure "
-                       "service-principal credentials, in backend/.env."}}))
-        await ws.close()
-        return
-
-    try:
-        htoken = await _entra_token()
-        headers = {
-            "Authorization": f"Bearer {htoken}"
-        }
-
-        #async with websockets.connect(
-        #    _voicelive_url(), additional_headers=headers, subprotocols=["realtime"],
-        #    max_size=None, ping_interval=20, ping_timeout=20,
-        #) as azure:
-        async with connect(
-            endpoint=VOICELIVE_ENDPOINT,
-            credential=credential,
-            agent_config=agent_config,
-        ) as azure:
-
-            #async def browser_to_azure():
-            #    while True:
-            #        raw = await ws.receive_text()
-            #        try:
-            #            data = json.loads(raw)
-            #        except Exception:
-            #            continue
-            #        if data.get("type") == "start":
-            #            data = _session_update(bool(data.get("auto_turn", True)))
-            #        await azure.send(json.dumps(data))
-            async def browser_to_azure():
-                while True:
-                    raw = await ws.receive_text()
-
-                    try:
-                        data = json.loads(raw)
-                    except json.JSONDecodeError:
-                        logger.warning("Invalid JSON from browser: %s", raw[:500])
-                        continue
-
-                    if data.get("type") == "start":
-                        data = _session_update(
-                            bool(data.get("auto_turn", True))
-                        )
-
-                    logger.info(
-                        "Browser -> Voice Live: type=%s",
-                        data.get("type")
-                    )
-
-                    await azure.send(data)
-
-            #async def azure_to_browser():
-            #    async for raw in azure:
-            #        await ws.send_text(raw if isinstance(raw, str) else raw.decode("utf-8", "ignore"))
-            async def azure_to_browser():
-                async for event in azure:
-                    logger.info(
-                        "Voice Live event: type=%s class=%s",
-                        getattr(event, "type", None),
-                        type(event).__name__,
-                    )
-                    if type(event).__name__ == "ServerEventError":
-                        logger.error("========== VOICE LIVE ERROR ==========")
-                        logger.error("event repr: %r", event)
-                        logger.error("event str: %s", event)
-                        logger.error("event dict: %s", getattr(event, "__dict__", None))
-                        logger.error("event type: %s", getattr(event, "type", None))
-                        logger.error("error: %s", getattr(event, "error", None))
-                        logger.error("code: %s", getattr(event, "code", None))
-                        logger.error("message: %s", getattr(event, "message", None))
-                        logger.error("param: %s", getattr(event, "param", None))
-                        logger.error("======================================")
-
-                    try:
-                        if isinstance(event, str):
-                            payload = event
-
-                        elif isinstance(event, bytes):
-                            payload = event.decode("utf-8", "ignore")
-
-                        elif hasattr(event, "model_dump"):
-                            payload = json.dumps(
-                                event.model_dump(mode="json"),
-                                default=str
-                            )
-
-                        elif hasattr(event, "as_dict"):
-                            payload = json.dumps(
-                                event.as_dict(),
-                                default=str
-                            )
-
-                        elif hasattr(event, "to_dict"):
-                            payload = json.dumps(
-                                event.to_dict(),
-                                default=str
-                            )
-
-                        else:
-                            payload = json.dumps(
-                                {
-                                    "type": getattr(
-                                        event,
-                                        "type",
-                                        type(event).__name__
-                                    ),
-                                    "event": str(event),
-                                }
-                            )
-
-                        await ws.send_text(payload)
-
-                    except Exception:
-                        logger.exception(
-                            "Failed to forward Voice Live event: %r",
-                            event,
-                        )
-
-            await asyncio.gather(browser_to_azure(), azure_to_browser())
-
-    except WebSocketDisconnect:
-        pass
-    except Exception as e:
-        logger.error("voice_ws error: %s", e)
-        try:
-            await ws.send_text(json.dumps({"type": "error", "error": {"message": str(e)[:300]}}))
-        except Exception:
-            pass
-    finally:
-        try:
-            await ws.close()
-        except Exception:
-            pass
-"""
-@api_router.websocket("/voice/ws")
-async def voice_ws(ws: WebSocket):
-    await ws.accept()
 
     logger.info("==========================================")
     logger.info("Browser WebSocket connected")
@@ -602,7 +470,7 @@ async def voice_ws(ws: WebSocket):
                                         }
                                     })
                                 else:
-                                    logger.info("Disabling Azure agent response generation and clearing tools")
+                                    logger.info("Disabling Azure agent response generation")
                                     await azure.send({
                                         "type": "session.update",
                                         "session": {
@@ -612,8 +480,7 @@ async def voice_ws(ws: WebSocket):
                                                 "prefix_padding_ms": 300,
                                                 "silence_duration_ms": 500,
                                                 "create_response": False,
-                                            },
-                                            "tools": []
+                                            }
                                         }
                                     })
                             except Exception as e:
@@ -640,6 +507,16 @@ async def voice_ws(ws: WebSocket):
                             "type": "ui.action",
                             "action": action
                         }))
+                        continue
+
+                    if event_type == "conversation.item.create":
+                        # Capture typed user text for turn fallback
+                        item_data = data.get("item") or {}
+                        content_list = item_data.get("content") or []
+                        for c in content_list:
+                            if isinstance(c, dict) and c.get("text"):
+                                session_state["last_user_transcript"] = c["text"]
+                        await azure.send(data)
                         continue
 
                     # Forward signaling and conversation events.
@@ -685,79 +562,142 @@ async def voice_ws(ws: WebSocket):
                 }:
                     logger.info("VOICE EVENT: %s", event)
 
-                # Intercept agent function calls (only on response.output_item.done when arguments are complete)
+                if event_type == "response.created":
+                    session_state["tool_executed_this_turn"] = False
+
+                if event_type == "conversation.item.input_audio_transcription.completed":
+                    trans = getattr(event, "transcript", None) or (event.get("transcript") if isinstance(event, dict) else "")
+                    if trans:
+                        session_state["last_user_transcript"] = trans
+
+                # Intercept agent function calls (both response.output_item.done and response.function_call_arguments.done)
                 item = getattr(event, "item", None) or (event.get("item") if isinstance(event, dict) else None) or {}
                 item_type = getattr(item, "type", None) or (item.get("type") if isinstance(item, dict) else "")
 
+                is_func_call = False
+                call_id = None
+                func_name = None
+                raw_args = "{}"
+
                 if event_type == "response.output_item.done" and item_type == "function_call":
+                    is_func_call = True
                     call_id = getattr(item, "call_id", None) or (item.get("call_id") if isinstance(item, dict) else None)
                     func_name = getattr(item, "name", None) or (item.get("name") if isinstance(item, dict) else None)
                     raw_args = getattr(item, "arguments", None) or (item.get("arguments") if isinstance(item, dict) else "{}")
+                elif event_type == "response.function_call_arguments.done":
+                    is_func_call = True
+                    call_id = getattr(event, "call_id", None) or (event.get("call_id") if isinstance(event, dict) else None)
+                    func_name = getattr(event, "name", None) or (event.get("name") if isinstance(event, dict) else None)
+                    raw_args = getattr(event, "arguments", None) or (event.get("arguments") if isinstance(event, dict) else "{}")
 
+                if is_func_call and call_id and func_name and call_id not in session_state["processed_calls"]:
+                    session_state["processed_calls"].add(call_id)
+                    session_state["tool_executed_this_turn"] = True
                     logger.info("AGENT FUNCTION CALL FINALIZED: name=%s call_id=%s args=%s (use_agent=%s)", func_name, call_id, raw_args, session_state["use_agent"])
 
-                    if call_id and func_name and call_id not in session_state["processed_calls"]:
-                        session_state["processed_calls"].add(call_id)
-
-                        # If agent mode is unchecked / disabled:
-                        if not session_state["use_agent"]:
-                            logger.info("use_agent is False; suppressing agent tool execution and speech response")
-                            try:
-                                await azure.send({
-                                    "type": "conversation.item.create",
-                                    "item": {
-                                        "type": "function_call_output",
-                                        "call_id": call_id,
-                                        "output": json.dumps({"status": "disabled", "message": "Agent actions disabled by user."})
-                                    }
-                                })
-                                # DO NOT call response.create!
-                            except Exception as ex:
-                                logger.exception("Failed to close function_call_output when use_agent=False: %s", ex)
-                            continue
-
-                        # When use_agent is True:
-                        try:
-                            args_dict = json.loads(raw_args) if isinstance(raw_args, str) else (raw_args or {})
-                        except Exception:
-                            args_dict = {}
-
-                        active_filters = session_state.get("active_filters", {})
-                        tool_output, ui_action = await execute_agent_tool(
-                            func_name,
-                            args_dict,
-                            db,
-                            session_state["current_page"],
-                            active_filters=active_filters,
-                            app_code=session_state.get("app_code"),
-                        )
-                        logger.info("EXECUTED AGENT TOOL: output=%s action=%s", tool_output, ui_action)
-
-                        # Send function call output back to Voice Live
+                    # If agent mode is unchecked / disabled:
+                    if not session_state["use_agent"]:
+                        logger.info("use_agent is False; suppressing agent tool execution and speech response")
                         try:
                             await azure.send({
                                 "type": "conversation.item.create",
                                 "item": {
                                     "type": "function_call_output",
                                     "call_id": call_id,
-                                    "output": json.dumps(tool_output)
+                                    "output": json.dumps({"status": "disabled", "message": "Agent actions disabled by user."})
                                 }
                             })
-                            await azure.send({"type": "response.create"})
                         except Exception as ex:
-                            logger.exception("Failed to send function_call_output to Azure: %s", ex)
+                            logger.exception("Failed to close function_call_output when use_agent=False: %s", ex)
+                        continue
 
-                        # Send UI action to browser
-                        try:
-                            await ws.send_text(json.dumps({
-                                "type": "ui.action",
-                                "action": ui_action
-                            }))
-                        except (WebSocketDisconnect, ConnectionResetError, RuntimeError):
-                            logger.info("azure_to_browser: browser disconnected during ui.action send")
-                            return
-                        except Exception as ex:
-                            logger.exception("Failed to send ui.action to browser: %s", ex)
+                    # When use_agent is True:
+                    try:
+                        args_dict = json.loads(raw_args) if isinstance(raw_args, str) else (raw_args or {})
+                    except Exception:
+                        args_dict = {}
+
+                    active_filters = session_state.get("active_filters", {})
+                    tool_output, ui_action = await execute_agent_tool(
+                        func_name,
+                        args_dict,
+                        db,
+                        session_state["current_page"],
+                        active_filters=active_filters,
+                        app_code=session_state.get("app_code"),
+                    )
+                    logger.info("EXECUTED AGENT TOOL: output=%s action=%s", tool_output, ui_action)
+                    if ui_action and ui_action.get("reset"):
+                        session_state["active_filters"] = {}
+                    elif ui_action and ui_action.get("filters"):
+                        session_state["active_filters"].update(ui_action["filters"])
+                    if ui_action and ui_action.get("target"):
+                        session_state["current_page"] = ui_action["target"]
+
+                    # Send function call output back to Voice Live
+                    try:
+                        await azure.send({
+                            "type": "conversation.item.create",
+                            "item": {
+                                "type": "function_call_output",
+                                "call_id": call_id,
+                                "output": json.dumps(tool_output)
+                            }
+                        })
+                        await azure.send({"type": "response.create"})
+                    except Exception as ex:
+                        logger.exception("Failed to send function_call_output to Azure: %s", ex)
+
+                    # Send UI action to browser
+                    try:
+                        await ws.send_text(json.dumps({
+                            "type": "ui.action",
+                            "action": ui_action
+                        }))
+                    except (WebSocketDisconnect, ConnectionResetError, RuntimeError):
+                        logger.info("azure_to_browser: browser disconnected during ui.action send")
+                        return
+                    except Exception as ex:
+                        logger.exception("Failed to send ui.action to browser: %s", ex)
+
+                # Fallback: If agent finished its turn without calling a tool, but user gave an actionable command
+                if event_type == "response.done" and session_state.get("use_agent"):
+                    if not session_state.get("tool_executed_this_turn") and session_state.get("last_user_transcript"):
+                        user_phrase = session_state.pop("last_user_transcript", "").strip()
+                        if user_phrase:
+                            try:
+                                _, fb_action = await execute_action(
+                                    user_input={"user_input": user_phrase, "use_agent": True},
+                                    current_page=session_state.get("current_page", "orders"),
+                                    active_filters=session_state.get("active_filters", {}),
+                                    app_code=session_state.get("app_code"),
+                                    db=db
+                                )
+                                if fb_action and (
+                                    fb_action.get("type") in ("click", "create_request")
+                                    or (fb_action.get("type") == "navigate" and (fb_action.get("target") == "back" or fb_action.get("target") != session_state.get("current_page")))
+                                    or (fb_action.get("type") in ("navigate", "search", "read") and (
+                                        fb_action.get("filters")
+                                        or fb_action.get("reset")
+                                        or fb_action.get("page")
+                                        or fb_action.get("sort")
+                                        or fb_action.get("sort_by")
+                                        or fb_action.get("type") == "read"
+                                    ))
+                                ):
+                                    if fb_action.get("reset"):
+                                        session_state["active_filters"] = {}
+                                    elif fb_action.get("filters"):
+                                        session_state["active_filters"].update(fb_action["filters"])
+                                    if fb_action.get("target") and fb_action.get("target") != "back":
+                                        session_state["current_page"] = fb_action["target"]
+                                    logger.info("Agent speech turn completed without tool; dispatching fallback UI action: %s", fb_action)
+                                    await ws.send_text(json.dumps({
+                                        "type": "ui.action",
+                                        "action": fb_action
+                                    }))
+                            except Exception as ex:
+                                logger.warning("Failed to evaluate fallback turn command: %s", ex)
 
                 # Convert SDK event -> JSON and forward to browser.
                 try:
@@ -793,7 +733,11 @@ async def voice_ws(ws: WebSocket):
         #
         # Do NOT use VOICELIVE_API_KEY.
         # ClientSecretCredential is used here.
-
+        print("=== FINAL CONFIG ===")
+        print("VOICELIVE_ENDPOINT:", VOICELIVE_ENDPOINT)
+        print("VOICELIVE_API_VERSION:", repr(VOICELIVE_API_VERSION))
+        
+        print("====================")
         azure = await connect(
             endpoint=VOICELIVE_ENDPOINT,
             credential=credential,
@@ -886,6 +830,8 @@ for default_origin in [
     "http://127.0.0.1:3000",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "http://localhost:7600",
+    "http://127.0.0.1:7600",
 ]:
     if default_origin not in cors_origins:
         cors_origins.append(default_origin)

@@ -288,7 +288,11 @@
         "tariffs",
         "estimate",
         "estimates",
-        "rate quotes"
+        "rate quotes",
+        "question",
+        "questions",
+        "qutestion",
+        "qutestions"
       ],
       "searchPlaceholder": "Search by quote #, company, origin, or destination\u2026",
       "hints": [

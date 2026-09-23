@@ -22,6 +22,9 @@ export class LiveAvatarElement extends HTMLElement {
       "current-route",
       "current-page",
       "use-agent",
+      "use-agent-mode",
+      "disable-agent-mode",
+      "disable-use-agent-mode",
       "auto-turn",
       "avatar-title",
       "poster-url",
@@ -43,10 +46,12 @@ export class LiveAvatarElement extends HTMLElement {
   private status: "idle" | "connecting" | "negotiating" | "live" | "error" = "idle";
   private autoTurn: boolean = true;
   private useAgent: boolean = true;
+  private disableAgentModeState: boolean = false;
   private currentRoute: string = "/orders";
   private currentPage: string = "orders";
   private avatarTitle: string = "Lisa AI Assistant";
   private posterUrl: string = DEFAULT_POSTER;
+  private apiUrl: string = "http://localhost:8000";
   private customWsUrl: string = "";
   private activeFilters: Record<string, any> = {};
   private messages: Array<{ role: "user" | "assistant"; text: string; id: number }> = [];
@@ -89,6 +94,26 @@ export class LiveAvatarElement extends HTMLElement {
   }
 
   public connectedCallback() {
+    this.appCode = this.getAttribute("app-code") || this.getAttribute("app") || this.appCode;
+    const apiUrl = this.getAttribute("api-url");
+    if (apiUrl) {
+      this.apiUrl = apiUrl;
+      this.client.setApiUrl(apiUrl);
+    }
+    const curRoute = this.getAttribute("current-route");
+    if (curRoute) this.currentRoute = curRoute;
+    if (this.hasAttribute("disable-agent-mode") || this.hasAttribute("disable-use-agent-mode")) {
+      const disVal = this.getAttribute("disable-agent-mode") || this.getAttribute("disable-use-agent-mode");
+      this.disableAgentModeState = disVal !== "false";
+    }
+    if (this.hasAttribute("use-agent-mode") || this.hasAttribute("use-agent")) {
+      const uVal = this.getAttribute("use-agent-mode") || this.getAttribute("use-agent");
+      this.useAgent = uVal !== "false" && !this.disableAgentModeState;
+    }
+    if (this.disableAgentModeState) {
+      this.useAgent = false;
+    }
+
     this.render();
     this.bindEvents();
     this.initLifecycleGuards();
@@ -96,6 +121,11 @@ export class LiveAvatarElement extends HTMLElement {
 
     if (this.hasAttribute("start-open")) {
       this.open();
+    }
+
+    if (typeof window !== "undefined") {
+      (window as any).sendCvsCreateRequest = (text: string, analyzed?: string | null, raw?: string) => this.sendCreateRequest(text, analyzed, raw);
+      (window as any).cvsCreateRequest = (text: string, analyzed?: string | null, raw?: string) => this.sendCreateRequest(text, analyzed, raw);
     }
   }
 
@@ -106,6 +136,12 @@ export class LiveAvatarElement extends HTMLElement {
       window.removeEventListener("pagehide", this.unloadListener);
       this.unloadListener = null;
     }
+    if (typeof window !== "undefined") {
+      try {
+        delete (window as any).sendCvsCreateRequest;
+        delete (window as any).cvsCreateRequest;
+      } catch (_) {}
+    }
   }
 
   public attributeChangedCallback(name: string, oldVal: string | null, newVal: string | null) {
@@ -114,6 +150,7 @@ export class LiveAvatarElement extends HTMLElement {
     switch (name) {
       case "api-url":
         if (newVal) {
+          this.apiUrl = newVal;
           this.client.setApiUrl(newVal);
           this.loadBackendData();
         }
@@ -128,9 +165,19 @@ export class LiveAvatarElement extends HTMLElement {
         if (newVal) this.setCurrentPage(newVal);
         break;
       case "use-agent":
-        this.useAgent = newVal !== "false";
-        if (this.agentModeCheck) this.agentModeCheck.checked = this.useAgent;
-        this.updateAgentBadge();
+      case "use-agent-mode":
+        if (!this.disableAgentModeState) {
+          this.useAgent = newVal !== "false";
+          if (this.agentModeCheck) this.agentModeCheck.checked = this.useAgent;
+          this.updateAgentBadge();
+          if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            this.ws.send(JSON.stringify({ type: "set_agent_mode", use_agent: this.useAgent }));
+          }
+        }
+        break;
+      case "disable-agent-mode":
+      case "disable-use-agent-mode":
+        this.disableAgentMode = newVal !== "false";
         break;
       case "auto-turn":
         this.autoTurn = newVal !== "false";
@@ -162,8 +209,50 @@ export class LiveAvatarElement extends HTMLElement {
   }
 
   // =========================================================================
-  // Public Methods for Host Applications (Angular, React, Vue, ASP.NET, MAUI)
+  // Public Methods & Properties for Host Applications (Angular, React, Vue, ASP.NET, MAUI)
   // =========================================================================
+
+  public get useAgentMode(): boolean {
+    return this.useAgent;
+  }
+  public set useAgentMode(val: boolean) {
+    if (this.disableAgentModeState) {
+      this.useAgent = false;
+      return;
+    }
+    this.useAgent = !!val;
+    if (this.agentModeCheck) this.agentModeCheck.checked = this.useAgent;
+    this.updateAgentBadge();
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: "set_agent_mode", use_agent: this.useAgent }));
+    }
+  }
+
+  public get disableAgentMode(): boolean {
+    return this.disableAgentModeState;
+  }
+  public set disableAgentMode(val: boolean) {
+    this.disableAgentModeState = !!val;
+    if (this.disableAgentModeState) {
+      this.useAgent = false;
+      if (this.agentModeCheck) {
+        this.agentModeCheck.checked = false;
+        this.agentModeCheck.disabled = true;
+      }
+      this.updateAgentBadge();
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify({ type: "set_agent_mode", use_agent: false }));
+      }
+    } else {
+      if (this.agentModeCheck) {
+        this.agentModeCheck.disabled = false;
+      }
+    }
+  }
+
+  public setAgentMode(enabled: boolean) {
+    this.useAgentMode = enabled;
+  }
 
   /**
    * Supply the on-screen table or grid rows so Lisa can read them aloud.
@@ -183,6 +272,9 @@ export class LiveAvatarElement extends HTMLElement {
       this.currentPage = p.key;
       this.updateHints();
     }
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: "page.change", page: this.currentPage, route: this.currentRoute }));
+    }
   }
 
   /**
@@ -194,6 +286,9 @@ export class LiveAvatarElement extends HTMLElement {
     if (p) {
       this.currentRoute = p.route;
       this.updateHints();
+    }
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: "page.change", page: this.currentPage, route: this.currentRoute }));
     }
   }
 
@@ -225,6 +320,9 @@ export class LiveAvatarElement extends HTMLElement {
     this.popupEl.classList.remove("hidden");
     this.popupEl.classList.add("visible");
     this.fabBtn.style.display = "none";
+    if (this.windowState === "minimized") {
+      this.restore();
+    }
   }
 
   public close() {
@@ -232,6 +330,65 @@ export class LiveAvatarElement extends HTMLElement {
     this.popupEl.classList.remove("visible");
     this.popupEl.classList.add("hidden");
     this.fabBtn.style.display = "flex";
+  }
+
+  private windowState: "normal" | "minimized" | "maximized" = "normal";
+
+  public minimize() {
+    if (this.windowState === "minimized") {
+      this.restore();
+      return;
+    }
+    this.windowState = "minimized";
+    this.popupEl.classList.remove("maximized");
+    this.popupEl.classList.add("minimized");
+    this.updateHeaderActionIcons();
+  }
+
+  public maximize() {
+    if (this.windowState === "maximized") {
+      this.restore();
+      return;
+    }
+    this.windowState = "maximized";
+    this.popupEl.classList.remove("minimized");
+    this.popupEl.classList.add("maximized");
+    this.updateHeaderActionIcons();
+  }
+
+  public restore() {
+    this.windowState = "normal";
+    this.popupEl.classList.remove("minimized", "maximized");
+    this.updateHeaderActionIcons();
+  }
+
+  private updateHeaderActionIcons() {
+    const minBtn = this.root.querySelector<HTMLButtonElement>(".minimize-btn");
+    const maxBtn = this.root.querySelector<HTMLButtonElement>(".maximize-btn");
+
+    if (minBtn) {
+      if (this.windowState === "minimized") {
+        minBtn.innerHTML = ICONS.chevronUp;
+        minBtn.title = "Restore";
+        minBtn.setAttribute("aria-label", "Restore Assistant");
+      } else {
+        minBtn.innerHTML = ICONS.minimize;
+        minBtn.title = "Minimize";
+        minBtn.setAttribute("aria-label", "Minimize Assistant");
+      }
+    }
+
+    if (maxBtn) {
+      if (this.windowState === "maximized") {
+        maxBtn.innerHTML = ICONS.restore;
+        maxBtn.title = "Restore Down";
+        maxBtn.setAttribute("aria-label", "Restore Down");
+      } else {
+        maxBtn.innerHTML = ICONS.maximize;
+        maxBtn.title = "Maximize";
+        maxBtn.setAttribute("aria-label", "Maximize Assistant");
+      }
+    }
   }
 
   public toggle() {
@@ -245,6 +402,175 @@ export class LiveAvatarElement extends HTMLElement {
 
   public stop() {
     this.toggleAvatar(false);
+  }
+
+  private createRequestHandler?: (text: string, analyzed?: string | null, raw?: string) => Promise<any> | any;
+
+  /**
+   * Register a custom handler for create requests.
+   * If provided, sendCreateRequest() will invoke this handler.
+   */
+  public setCreateRequestHandler(handler: (text: string, analyzed?: string | null, raw?: string) => Promise<any> | any) {
+    this.createRequestHandler = handler;
+  }
+
+  /**
+   * Exposed function: Send a create request to CVS API.
+   * Accessible directly on the web component, or globally via window.sendCvsCreateRequest(text)
+   * and window.cvsCreateRequest(text).
+   */
+  public async sendCreateRequest(requestText: string, analyzedText?: string | null, rawText?: string): Promise<any> {
+    const text = (requestText || "").trim();
+    const raw = (rawText || text).trim();
+    const analyzed = analyzedText !== undefined ? analyzedText : (this.useAgent ? text : null);
+    if (!text && !raw) {
+      console.warn("[LiveAvatarElement] sendCreateRequest: empty request text.");
+      return null;
+    }
+
+    console.log("[LiveAvatarElement] Executing exposed sendCreateRequest:", { text, raw, analyzed });
+
+    let result: any = null;
+    try {
+      if (typeof this.createRequestHandler === "function") {
+        result = await this.createRequestHandler(text, analyzed, raw);
+      } else if (typeof (window as any).cvsBotSendRequest === "function") {
+        result = await (window as any).cvsBotSendRequest(text, analyzed, raw);
+      } else if (typeof (window as any).cvsApi?.createRequest === "function") {
+        result = await (window as any).cvsApi.createRequest(text, analyzed, raw);
+      } else {
+        const customUrl = this.getAttribute("create-api-url");
+        const endpoint = customUrl || `${this.apiUrl}/api/cvs/create-request`;
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text,
+            request_text: text,
+            raw_text: raw,
+            analyzed_text: analyzed,
+            page: this.currentPage,
+            app: this.appCode || "cvs",
+          }),
+        });
+        if (res.ok) {
+          result = await res.json();
+        } else {
+          result = { status: "submitted", text, raw_text: raw, analyzed_text: analyzed, timestamp: new Date().toISOString() };
+        }
+      }
+    } catch (err) {
+      console.warn("[LiveAvatarElement] sendCreateRequest error:", err);
+      result = { status: "submitted", text, raw_text: raw, analyzed_text: analyzed, timestamp: new Date().toISOString() };
+    }
+
+    const reqId = result?.request_id || result?.id || `REQ-${Date.now().toString().slice(-6)}`;
+    this.pushMessage("assistant", `Create request ${reqId} created: "${text}"`);
+
+    // Dispatch custom event to host app
+    this.dispatchEvent(
+      new CustomEvent("avatar-create-request", {
+        detail: {
+          requestText: text,
+          text,
+          raw_text: raw,
+          rawText: raw,
+          analyzed_text: analyzed,
+          analyzedText: analyzed,
+          result,
+          requestId: reqId,
+          page: this.currentPage,
+        },
+        bubbles: true,
+        composed: true,
+      })
+    );
+
+    return result;
+  }
+
+  /**
+   * Exposed function: Perform click operation on grid elements (button, icon, link).
+   * Locates row by data-row-id or data-row-index, and clicks matching action element.
+   */
+  public performClick(action: CommandAction): boolean {
+    if (typeof document === "undefined") return false;
+
+    const rowId = action.row_identifier;
+    const rowIdx = action.row_index;
+    const element = (action.element || action.action_type || "button").toLowerCase();
+
+    // 1. Locate the target row
+    let targetRow: HTMLElement | null = null;
+    if (rowId) {
+      targetRow = document.querySelector(`tr[data-row-id="${rowId}"], [data-row-id="${rowId}"]`);
+      if (!targetRow) {
+        const allRows = document.querySelectorAll("tr[data-row-id], [data-row-id]");
+        for (let i = 0; i < allRows.length; i++) {
+          const attr = allRows[i].getAttribute("data-row-id");
+          if (attr && attr.toLowerCase() === rowId.toLowerCase()) {
+            targetRow = allRows[i] as HTMLElement;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!targetRow && rowIdx !== undefined && rowIdx !== null) {
+      if (rowIdx === -1) {
+        const allRows = document.querySelectorAll("tbody tr, table tr:not(:first-child)");
+        if (allRows.length) targetRow = allRows[allRows.length - 1] as HTMLElement;
+      } else {
+        targetRow = document.querySelector(`tr[data-row-index="${rowIdx}"], [data-row-index="${rowIdx}"]`);
+        if (!targetRow) {
+          const allRows = document.querySelectorAll("tbody tr, table tr:not(:first-child)");
+          if (allRows[rowIdx]) targetRow = allRows[rowIdx] as HTMLElement;
+        }
+      }
+    }
+
+    if (!targetRow) {
+      console.log("[LiveAvatarElement] performClick: row not found in DOM, relied on event dispatch.", action);
+      return false;
+    }
+
+    // Highlight row temporarily
+    targetRow.classList.add("avatar-row-highlight");
+    try {
+      targetRow.style.outline = "2px solid #2563eb";
+      targetRow.style.backgroundColor = "#eff6ff";
+      setTimeout(() => {
+        if (targetRow) {
+          targetRow.classList.remove("avatar-row-highlight");
+          targetRow.style.outline = "";
+          targetRow.style.backgroundColor = "";
+        }
+      }, 2000);
+    } catch (_) {}
+
+    // 2. Find target element inside row (button, link, icon)
+    let targetEl: HTMLElement | null = null;
+    if (element === "edit") {
+      targetEl = targetRow.querySelector('[data-action="edit"], button.btn-edit, .action-edit, button[title*="Edit" i]');
+    } else if (element === "delete") {
+      targetEl = targetRow.querySelector('[data-action="delete"], button.btn-delete, .action-delete, button[title*="Delete" i]');
+    } else if (element === "order_number" || element === "link" || element === "quote_number") {
+      targetEl = targetRow.querySelector(`[data-action="link"], [data-field="${element}"], a, td:first-child a, td:first-child strong, .row-link`);
+    } else if (element === "view" || element === "icon") {
+      targetEl = targetRow.querySelector('[data-action="view"], [data-action="details"], button.btn-view, .action-view');
+    }
+
+    if (!targetEl) {
+      targetEl = targetRow.querySelector(`[data-action="${element}"], button, a`);
+    }
+
+    if (targetEl) {
+      console.log("[LiveAvatarElement] performClick: Clicking DOM element in row:", targetEl);
+      targetEl.click();
+      return true;
+    }
+
+    return false;
   }
 
   public toggleAvatar(on: boolean) {
@@ -288,7 +614,13 @@ export class LiveAvatarElement extends HTMLElement {
               <input type="checkbox" class="power-toggle" data-testid="lisa-power-switch">
               <span class="switch-slider"></span>
             </label>
-            <button class="close-btn" data-testid="lisa-close-btn" aria-label="Close Assistant">
+            <button class="minimize-btn" data-testid="lisa-minimize-btn" aria-label="Minimize Assistant" title="Minimize">
+              ${ICONS.minimize}
+            </button>
+            <button class="maximize-btn" data-testid="lisa-maximize-btn" aria-label="Maximize Assistant" title="Maximize">
+              ${ICONS.maximize}
+            </button>
+            <button class="close-btn" data-testid="lisa-close-btn" aria-label="Close Assistant" title="Close">
               ${ICONS.close}
             </button>
           </div>
@@ -301,7 +633,7 @@ export class LiveAvatarElement extends HTMLElement {
             <label for="autoturn-check">Auto turn-taking (barge-in)</label>
           </div>
           <div class="toolbar-row">
-            <input type="checkbox" id="agentmode-check" data-testid="lisa-agent-mode-checkbox" ${this.useAgent ? "checked" : ""}>
+            <input type="checkbox" id="agentmode-check" data-testid="lisa-agent-mode-checkbox" ${this.useAgent ? "checked" : ""} ${this.disableAgentModeState ? "disabled" : ""}>
             <label for="agentmode-check">
               <span>Use Agent for Actions</span>
               <span class="badge ${this.useAgent ? "badge-agent" : "badge-direct"}">
@@ -388,10 +720,36 @@ export class LiveAvatarElement extends HTMLElement {
   private bindEvents() {
     this.fabBtn.addEventListener("click", () => this.open());
 
+    const minimizeBtn = this.root.querySelector(".minimize-btn");
+    minimizeBtn?.addEventListener("click", () => {
+      this.minimize();
+    });
+
+    const maximizeBtn = this.root.querySelector(".maximize-btn");
+    maximizeBtn?.addEventListener("click", () => {
+      this.maximize();
+    });
+
     const closeBtn = this.root.querySelector(".close-btn")!;
     closeBtn.addEventListener("click", () => {
       this.toggleAvatar(false);
       this.close();
+    });
+
+    const popupHeader = this.root.querySelector(".popup-header");
+    popupHeader?.addEventListener("click", (e: Event) => {
+      const target = e.target as HTMLElement;
+      if (
+        target.closest(".minimize-btn") ||
+        target.closest(".maximize-btn") ||
+        target.closest(".close-btn") ||
+        target.closest(".switch-label")
+      ) {
+        return;
+      }
+      if (this.windowState === "minimized") {
+        this.restore();
+      }
     });
 
     this.powerToggle.addEventListener("change", (e) => {
@@ -403,6 +761,11 @@ export class LiveAvatarElement extends HTMLElement {
     });
 
     this.agentModeCheck.addEventListener("change", (e) => {
+      if (this.disableAgentModeState) {
+        this.agentModeCheck.checked = false;
+        this.useAgent = false;
+        return;
+      }
       this.useAgent = (e.target as HTMLInputElement).checked;
       this.updateAgentBadge();
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
@@ -882,6 +1245,28 @@ export class LiveAvatarElement extends HTMLElement {
     );
 
     if (action.type === "navigate") {
+      const isBack = target === "back" || (action as any).route === "back" || (action as any).action === "back";
+      if (isBack) {
+        const msg = action.message || "Navigating back to previous page.";
+        this.pushMessage("assistant", msg);
+        const navEvent = new CustomEvent("avatar-navigate", {
+          detail: { route: "back", pageKey: "back", isBack: true, message: msg },
+          bubbles: true,
+          composed: true,
+          cancelable: true,
+        });
+        const dispatched = this.dispatchEvent(navEvent);
+        if (dispatched && !navEvent.defaultPrevented) {
+          try {
+            if (typeof window !== "undefined" && window.history && typeof window.history.back === "function") {
+              window.history.back();
+            }
+          } catch (e) {
+            console.warn("[live-avatar] window.history.back() error:", e);
+          }
+        }
+        return;
+      }
       const route = page?.route || `/${target}`;
       this.setCurrentPage(target);
       const msg = action.message || `Opening ${page?.title || target}.`;
@@ -895,7 +1280,7 @@ export class LiveAvatarElement extends HTMLElement {
           composed: true,
         })
       );
-    } else if (action.type === "search") {
+    } else if (action.type === "search" || (action as any).type === "paginate" || (action as any).type === "sort") {
       const route = page?.route || `/${target}`;
       if (target !== cur) {
         this.setCurrentPage(target);
@@ -910,13 +1295,29 @@ export class LiveAvatarElement extends HTMLElement {
       const desc = this.client.describeSearch(action, page);
       this.pushMessage("assistant", action.message || desc);
 
+      if (action.reset) {
+        this.activeFilters = {};
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+          this.ws.send(JSON.stringify({ type: "filters.update", filters: {} }));
+        }
+      }
+
+      const sortDetail = action.sort || (action.sort_by ? { field: action.sort_by, direction: action.sort_order || "asc" } : undefined);
+      const pageVal = action.page ?? (action as any).pagination ?? (action as any).page_number;
+
       // Specific filter event for grid / table components
       this.dispatchEvent(
         new CustomEvent("avatar-filter", {
           detail: {
             pageKey: target,
+            route,
             filters: action.filters || {},
-            page: action.page,
+            page: pageVal,
+            pagination: pageVal,
+            pageNumber: pageVal,
+            sort: sortDetail,
+            sortBy: action.sort_by || (sortDetail ? sortDetail.field : undefined),
+            sortOrder: action.sort_order || (sortDetail ? sortDetail.direction : undefined),
             reset: action.reset || false,
             message: action.message || desc,
           },
@@ -924,8 +1325,68 @@ export class LiveAvatarElement extends HTMLElement {
           composed: true,
         })
       );
+
+      // Specific pagination event for host components
+      if (pageVal !== undefined && pageVal !== null) {
+        this.dispatchEvent(
+          new CustomEvent("avatar-paginate", {
+            detail: {
+              pageKey: target,
+              route,
+              page: pageVal,
+              pagination: pageVal,
+              pageNumber: pageVal,
+              message: action.message || desc,
+            },
+            bubbles: true,
+            composed: true,
+          })
+        );
+      }
+
+      // Specific sort event for host table/grid components
+      if (sortDetail) {
+        this.dispatchEvent(
+          new CustomEvent("avatar-sort", {
+            detail: {
+              pageKey: target,
+              route,
+              sort: sortDetail,
+              sortBy: sortDetail.field,
+              sortOrder: sortDetail.direction,
+              message: action.message || desc,
+            },
+            bubbles: true,
+            composed: true,
+          })
+        );
+      }
     } else if (action.type === "read") {
       this.readTopRow(action, target);
+    } else if (action.type === "click") {
+      const rowDesc = action.row_identifier ? `identifier ${action.row_identifier}` : (action.row_number === -1 ? "last row" : (action.row_number ? `row ${action.row_number}` : "selected row"));
+      const msg = action.message || `Clicking ${action.element || "element"} on ${rowDesc}.`;
+      this.pushMessage("assistant", msg);
+
+      this.dispatchEvent(
+        new CustomEvent("avatar-click", {
+          detail: action,
+          bubbles: true,
+          composed: true,
+        })
+      );
+
+      this.performClick(action);
+    } else if (action.type === "create_request") {
+      const reqText = action.request_text || action.text || "";
+      const rawText = action.raw_text || action.rawText || reqText;
+      const analyzedText = this.useAgent
+        ? (action.analyzed_text !== undefined ? action.analyzed_text : (action.analyzedText !== undefined ? action.analyzedText : reqText))
+        : null;
+      const msg = action.message || `Submitting create request: "${reqText}" to CVS.`;
+      this.pushMessage("assistant", msg);
+
+      this.sendCreateRequest(reqText, analyzedText, rawText);
     } else if (action.message) {
       this.pushMessage("assistant", action.message);
     }

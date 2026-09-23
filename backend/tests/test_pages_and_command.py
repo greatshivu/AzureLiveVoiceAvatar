@@ -1,7 +1,7 @@
 """Tests for pages_config.json, /api/pages, /api/command/execute, and execute_agent_tool."""
 import asyncio
 from fastapi.testclient import TestClient
-from server import app, db, search_orders, search_items
+from server import app, db
 from pages_config import get_pages_config, parse_command_internal, execute_agent_tool
 
 client = TestClient(app)
@@ -132,31 +132,54 @@ async def _run_async_agent_tests():
     assert ui_action3["type"] == "navigate"
     assert ui_action3["target"] == "items"
 
-    # 4. Search orders with comma-separated priority
-    res_p = await search_orders(priority="High,Medium", page_size=20)
-    assert len(res_p["results"]) > 0
-    assert all(r["priority"] in ("High", "Medium") for r in res_p["results"])
+    # 4. Search orders with comma-separated priority via generic action
+    tool_p, action_p = await execute_agent_tool(
+        func_name="perform_action",
+        args={"priority": "High,Medium"},
+        db=db,
+        current_page="orders"
+    )
+    assert action_p["filters"]["priority"] == ["High", "Medium"] or "High" in str(action_p["filters"]["priority"])
+    assert action_p["total"] > 0
 
-    # 5. Search orders with paid_status
-    res_paid = await search_orders(paid_status="paid", page_size=20)
-    assert len(res_paid["results"]) > 0
-    assert all(r["is_paid"] is True for r in res_paid["results"])
+    # 5. Search orders with paid_status via generic action
+    tool_paid, action_paid = await execute_agent_tool(
+        func_name="perform_action",
+        args={"paid_status": "paid"},
+        db=db,
+        current_page="orders"
+    )
+    assert action_paid["filters"]["paid_status"] == "paid"
+    assert action_paid["total"] > 0
 
-    res_unpaid = await search_orders(paid_status="unpaid", page_size=20)
-    assert len(res_unpaid["results"]) > 0
-    assert all(r["is_paid"] is False for r in res_unpaid["results"])
+    tool_unpaid, action_unpaid = await execute_agent_tool(
+        func_name="perform_action",
+        args={"paid_status": "unpaid"},
+        db=db,
+        current_page="orders"
+    )
+    assert action_unpaid["filters"]["paid_status"] == "unpaid"
+    assert action_unpaid["total"] > 0
 
-    # 6. Search orders with keyword and search aliases
-    res_search = await search_orders(search="ORD-100001")
-    assert res_search["total"] >= 1
-    assert res_search["results"][0]["order_number"] == "ORD-100001"
+    # 6. Search orders with keyword
+    tool_ord, action_ord = await execute_agent_tool(
+        func_name="perform_action",
+        args={"user_input": "ORD-100001"},
+        db=db,
+        current_page="orders"
+    )
+    assert action_ord["filters"]["q"] == "ORD-100001"
+    assert action_ord["total"] >= 1
 
-    res_kw = await search_orders(keyword="ORD-100001")
-    assert res_kw["total"] >= 1
-
-    # 7. Search items with keyword and in_stock
-    res_items = await search_items(keyword="SKU-200001")
-    assert res_items["total"] >= 1
+    # 7. Search items with keyword
+    tool_items, action_items = await execute_agent_tool(
+        func_name="perform_action",
+        args={"user_input": "SKU-200001", "page": "items"},
+        db=db,
+        current_page="orders"
+    )
+    assert action_items["filters"]["q"] == "SKU-200001"
+    assert action_items["total"] >= 1
 
     # 8. Test execute_agent_tool with active_filters merging
     tool_out, action = await execute_agent_tool(
@@ -182,6 +205,117 @@ async def _run_async_agent_tests():
     )
     assert action_prio["filters"]["priority"] == "High,Medium"
     assert tool_out_prio["total_matching"] > 0
+
+    # 10. Generic function tool 'perform_action' with natural language user_input (config-driven)
+    tool_out_gen, action_gen = await execute_agent_tool(
+        func_name="perform_action",
+        args={"user_input": "filter by low priority"},
+        db=db,
+        current_page="orders"
+    )
+    assert tool_out_gen["status"] == "success"
+    assert tool_out_gen["page"] == "orders"
+    assert action_gen["type"] == "search"
+    assert action_gen["filters"]["priority"] == "Low"
+
+    # 11. Generic function tool 'perform_action' across pages (Items search by keyword)
+    tool_out_gen_items, action_gen_items = await execute_agent_tool(
+        func_name="perform_action",
+        args={"user_input": "search for laptop"},
+        db=db,
+        current_page="orders"
+    )
+    assert tool_out_gen_items["status"] == "success"
+    assert tool_out_gen_items["page"] == "items"
+    assert action_gen_items["type"] == "search"
+    assert action_gen_items["filters"]["q"] == "laptop"
+
+    # 12. Generic function tool 'perform_action' for navigation
+    tool_out_gen_nav, action_gen_nav = await execute_agent_tool(
+        func_name="perform_action",
+        args={"user_input": "Go to items"},
+        db=db,
+        current_page="orders"
+    )
+    # 13. Generic function tool 'perform_action' for reset filters
+    tool_out_reset, action_reset = await execute_agent_tool(
+        func_name="perform_action",
+        args={"user_input": "reset filters"},
+        db=db,
+        current_page="orders"
+    )
+    assert tool_out_reset["status"] == "success"
+    assert action_reset["type"] == "search"
+    assert action_reset["reset"] is True
+    assert action_reset["filters"] == {}
+
+    # 14. Non-existent page handling (must not assume orders or first page)
+    tool_out_missing, action_missing = await execute_agent_tool(
+        func_name="perform_action",
+        args={"user_input": "go to invoices"},
+        db=db,
+        current_page="orders"
+    )
+    assert tool_out_missing["status"] == "not_found"
+    assert "invoices" in tool_out_missing["message"]
+    assert action_missing["type"] == "chat"
+    assert action_missing["status"] == "not_found"
+
+    # 15. Explicit non-existent target page argument
+    tool_out_exp_missing, action_exp_missing = await execute_agent_tool(
+        func_name="perform_action",
+        args={"user_input": "show billing", "page": "billing"},
+        db=db,
+        current_page="orders"
+    )
+    assert tool_out_exp_missing["status"] == "not_found"
+    assert "billing" in tool_out_exp_missing["message"]
+
+    # 16. CVS Quotations filtering: offered quotes
+    tool_out_cvs_offered, action_cvs_offered = await execute_agent_tool(
+        func_name="perform_action",
+        args={"user_input": "show offered quotes"},
+        db=None,
+        app_code="cvs"
+    )
+    assert tool_out_cvs_offered["status"] == "success"
+    assert tool_out_cvs_offered["page"] == "quotes"
+    assert action_cvs_offered["target"] == "quotes"
+    assert action_cvs_offered["filters"].get("workflow_status") == "OFFERED"
+
+    # 17. CVS Quotations filtering: won quotes
+    tool_out_cvs_won, action_cvs_won = await execute_agent_tool(
+        func_name="perform_action",
+        args={"user_input": "show won quotes"},
+        db=None,
+        app_code="cvs"
+    )
+    assert tool_out_cvs_won["status"] == "success"
+    assert action_cvs_won["filters"].get("workflow_status") == "WON"
+
+    # 18. CVS Quotations filtering: natural keyword "show quotations for Acme"
+    tool_out_cvs_kw, action_cvs_kw = await execute_agent_tool(
+        func_name="perform_action",
+        args={"user_input": "show quotations for Acme"},
+        db=None,
+        app_code="cvs"
+    )
+    assert tool_out_cvs_kw["status"] == "success"
+    assert action_cvs_kw["target"] == "quotes"
+    assert action_cvs_kw["filters"].get("q") == "Acme"
+
+    # 19. CVS Quotations reset filters
+    tool_out_cvs_reset, action_cvs_reset = await execute_agent_tool(
+        func_name="perform_action",
+        args={"user_input": "reset"},
+        db=None,
+        current_page="quotes",
+        app_code="cvs"
+    )
+    assert tool_out_cvs_reset["status"] == "success"
+    assert action_cvs_reset["target"] == "quotes"
+    assert action_cvs_reset["reset"] is True
+    assert action_cvs_reset["filters"] == {}
 
 
 def test_execute_agent_tools_all():

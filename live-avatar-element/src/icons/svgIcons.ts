@@ -4,6 +4,22 @@
  */
 
 export const ICONS = {
+  minimize: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 256 256" fill="currentColor">
+    <path d="M224,128a8,8,0,0,1-8,8H40a8,8,0,0,1,0-16H216A8,8,0,0,1,224,128Z"/>
+  </svg>`,
+
+  maximize: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 256 256" fill="currentColor">
+    <path d="M216,48H40A16,16,0,0,0,24,64V192a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V64A16,16,0,0,0,216,48Zm0,144H40V64H216V192Z"/>
+  </svg>`,
+
+  restore: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 256 256" fill="currentColor">
+    <path d="M216,40H88a16,16,0,0,0-16,16v24H40A16,16,0,0,0,24,96V208a16,16,0,0,0,16,16H168a16,16,0,0,0,16-16V184h32a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40Zm-48,168H40V96H168Zm48-40H184V96a16,16,0,0,0-16-16H88V56H216Z"/>
+  </svg>`,
+
+  chevronUp: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 256 256" fill="currentColor">
+    <path d="M213.66,165.66a8,8,0,0,1-11.32,0L128,91.31,53.66,165.66a8,8,0,0,1-11.32-11.32l80-80a8,8,0,0,1,11.32,0l80,80A8,8,0,0,1,213.66,165.66Z"/>
+  </svg>`,
+
   sparkle: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 256 256" fill="currentColor">
     <path d="M213.66,122.34l-56-56A8,8,0,0,0,144,72v32H40a8,8,0,0,0-8,8v32a8,8,0,0,0,8,8H144v32a8,8,0,0,0,13.66,5.66l56-56A8,8,0,0,0,213.66,122.34Z" opacity="0"></path>
     <path d="M224,128a96,96,0,1,1-96-96A96.11,96.11,0,0,1,224,128Zm-88-64a8,8,0,0,0-8,8v48H80a8,8,0,0,0,0,16h48v48a8,8,0,0,0,16,0V136h48a8,8,0,0,0,0-16H144V72A8,8,0,0,0,136,64Z" opacity="0"></path>

@@ -39,6 +39,8 @@ import { environment } from '../environments/environment';
         [attr.auto-turn]="'true'"
         (avatar-navigate)="onAvatarNavigate($event)"
         (avatar-filter)="onAvatarFilter($event)"
+        (avatar-click)="onAvatarClick($event)"
+        (avatar-create-request)="onAvatarCreateRequest($event)"
         (avatar-status)="onAvatarStatus($event)">
       </live-avatar-popup>
     </div>
@@ -118,6 +120,20 @@ export class AppComponent implements OnInit, OnDestroy {
     const detail = event?.detail || {};
     console.log('[Angular] Voice filter received from avatar:', detail);
     this.avatarBridge.dispatchFilter(detail);
+  }
+
+  // Handle voice click commands (e.g. "click edit on row 3", "click delete on order ORD-100200")
+  onAvatarClick(event: any) {
+    const detail = event?.detail || {};
+    console.log('[Angular] Voice click received from avatar:', detail);
+    this.avatarBridge.dispatchClick(detail);
+  }
+
+  // Handle voice create requests (e.g. "create request: New purchase order for Acme Corp")
+  onAvatarCreateRequest(event: any) {
+    const detail = event?.detail || {};
+    console.log('[Angular] Voice create request received from avatar:', detail);
+    this.avatarBridge.dispatchCreateRequest(detail);
   }
 
   // Handle avatar status changes

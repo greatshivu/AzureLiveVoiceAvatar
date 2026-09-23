@@ -253,7 +253,8 @@ Configure `<live-avatar-popup>` directly via HTML attributes or DOM properties:
 | `ws-url` | `string` | Auto-derived | Custom override for WebSocket URL (defaults to `{api-url}/api/voice/ws?app={app-code}`). |
 | `current-route` | `string` | `"/orders"` | The current client-side route path (e.g. `"/forwarding/orders"`). Synchronizes the avatar's context. |
 | `current-page` | `string` | `"orders"` | Active page key directly. |
-| `use-agent` | `boolean` | `true` | `true`: Uses Azure AI Foundry Agent (Checked Mode); `false`: Uses local rule parser (Unchecked Mode). |
+| `use-agent` / `use-agent-mode` | `boolean` | `true` | `true`: Uses Azure AI Foundry Agent (Checked Mode); `false`: Uses local rule parser (Direct API Mode). |
+| `disable-agent-mode` / `disable-use-agent-mode` | `boolean` | `false` | When `true`, locks the avatar in Direct API mode, disables the agent mode checkbox in the toolbar, and prevents switching to AI Agent mode. |
 | `auto-turn` | `boolean` | `true` | Enables server-side Voice Activity Detection (VAD) and auto-response generation. |
 | `avatar-title` | `string` | `"Lisa AI Assistant"` | Header text displayed in the avatar popup card. |
 | `poster-url` | `string` | Default portrait | Image displayed in the video box before WebRTC stream connects. |
@@ -269,30 +270,52 @@ Listen to custom events dispatched by `<live-avatar-popup>` to update your host 
 const avatar = document.querySelector('live-avatar-popup');
 
 // 1. Navigation commanded by user voice or AI agent
+// Supports forward routes as well as "navigate back", "go back", "take me back", "previous url"
 avatar.addEventListener('avatar-navigate', (event: CustomEvent) => {
-  const { route, pageKey, message } = event.detail;
+  const { route, pageKey, isBack, message } = event.detail;
+  if (isBack || route === 'back' || pageKey === 'back') {
+    // Automatically calls window.history.back() or handle via router:
+    window.history.back();
+    return;
+  }
   router.navigateByUrl(route);
 });
 
 // 2. Filter criteria commanded by user voice or AI agent
 avatar.addEventListener('avatar-filter', (event: CustomEvent) => {
-  const { pageKey, filters, reset, message } = event.detail;
+  const { pageKey, filters, reset, page, sort, message } = event.detail;
   applyTableFilters(filters);
 });
 
-// 3. Assistant reading a row aloud
+// 3. Voice-Driven Grid Click Operations
+// Triggered on commands like: "click edit on row 3", "click delete on ORD-100200", "click quote number link on row 1"
+avatar.addEventListener('avatar-click', (event: CustomEvent) => {
+  const { element, action_type, row_number, row_index, row_identifier, target } = event.detail;
+  console.log(`Clicked ${element} on row ${row_number || row_identifier}`);
+});
+
+// 4. Voice-Driven Create Request via Exposed Function
+// Triggered on commands like: "create request new shipment for Chicago", "submit request: urgent air quote"
+avatar.addEventListener('avatar-create-request', (event: CustomEvent) => {
+  const { raw_text, rawText, analyzed_text, analyzedText, requestText, text, result, requestId } = event.detail;
+  // In Agent mode: analyzed_text contains the clean extracted requirement, raw_text has the full utterance.
+  // In Non-Agent mode: analyzed_text is null, raw_text has the input command.
+  console.log('Create Request:', { rawText, analyzedText, requestId });
+});
+
+// 5. Assistant reading a row aloud
 avatar.addEventListener('avatar-read', (event: CustomEvent) => {
   const { pageKey, index, row, text } = event.detail;
   highlightRowInGrid(index);
 });
 
-// 4. Connection status changes
+// 6. Connection status changes
 avatar.addEventListener('avatar-status', (event: CustomEvent) => {
   const { status, isLive, error } = event.detail;
   console.log(`Avatar status: ${status} (live: ${isLive})`);
 });
 
-// 5. Chat message appended to transcript
+// 7. Chat message appended to transcript
 avatar.addEventListener('avatar-message', (event: CustomEvent) => {
   const { role, text, id } = event.detail;
 });
@@ -300,9 +323,9 @@ avatar.addEventListener('avatar-message', (event: CustomEvent) => {
 
 ---
 
-## Public JavaScript Methods
+## Public JavaScript Methods & Properties
 
-Call methods programmatically on the DOM element reference:
+Call methods and configure properties programmatically on the DOM element reference:
 
 ```typescript
 const avatar = document.querySelector('live-avatar-popup');
@@ -316,6 +339,26 @@ avatar.setCurrentPage('quotes');
 
 // Send programmatic text command
 avatar.sendCommand('Show high priority quotes');
+
+// Exposed Create Request function (also on window.sendCvsCreateRequest and window.cvsCreateRequest)
+await avatar.sendCreateRequest('New purchase order for Acme Corp', 'purchase order for Acme Corp', 'create request New purchase order for Acme Corp');
+
+// Register custom create request handler (e.g. to route to local CVS chatbot API)
+avatar.setCreateRequestHandler(async (requestText, analyzedText, rawText) => {
+  return await cvsApiService.submitBotRequest({ requestText, analyzedText, rawText });
+});
+
+// Programmatic Click execution on on-screen grid elements
+avatar.performClick({
+  element: 'edit',
+  row_number: 2,
+  row_identifier: 'ORD-100200'
+});
+
+// Agent Mode Programmatic Control
+avatar.useAgentMode = true;       // Enable/disable AI Agent mode
+avatar.disableAgentMode = true;   // Lock in Direct API mode (disables toolbar checkbox)
+avatar.setAgentMode(false);       // Helper method
 
 // UI Controls
 avatar.open();         // Open popup card
@@ -412,7 +455,11 @@ export class AppComponent {
 @if (isAvatarVisible()) {
   <live-avatar-popup 
     app-code="cvs"
-    api-url="http://localhost:8000">
+    api-url="http://localhost:8000"
+    (avatar-navigate)="onAvatarNavigate($event)"
+    (avatar-filter)="onAvatarFilter($event)"
+    (avatar-click)="onAvatarClick($event)"
+    (avatar-create-request)="onAvatarCreateRequest($event)">
   </live-avatar-popup>
 }
 ```

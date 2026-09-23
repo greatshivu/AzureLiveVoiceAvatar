@@ -1,6 +1,6 @@
 {
   "name": "live-avatar-element",
-  "version": "1.0.3",
+  "version": "1.0.13",
   "description": "Framework-agnostic Web Component for Azure Voice Live interactive avatar assistant. Compatible with Angular, ASP.NET Core, .NET MAUI, React, Vue, and plain HTML.",
   "main": "./dist/live-avatar-popup.umd.js",
   "module": "./dist/live-avatar-popup.es.js",
