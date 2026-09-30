@@ -134,10 +134,12 @@ export const AVATAR_STYLES = `
 .avatar-popup.minimized {
   width: 320px;
   max-width: calc(100vw - 32px);
-  height: auto;
+  height: auto !important;
+  max-height: 56px !important;
   cursor: pointer;
   border-radius: 12px;
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.15);
+  overflow: hidden !important;
 }
 
 .avatar-popup.minimized .popup-header {
@@ -151,6 +153,34 @@ export const AVATAR_STYLES = `
 .avatar-popup.minimized .hints-container,
 .avatar-popup.minimized .input-bar {
   display: none !important;
+}
+
+.option-chip {
+  background: #eff6ff;
+  border: 1px solid #93c5fd;
+  border-radius: 20px;
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #1d4ed8;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.option-chip:hover {
+  background: #2563eb;
+  color: #ffffff;
+  border-color: #2563eb;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.25);
+}
+
+.option-chip:active {
+  transform: translateY(0);
 }
 
 .avatar-popup.maximized {

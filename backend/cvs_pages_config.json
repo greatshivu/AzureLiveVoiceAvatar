@@ -548,7 +548,33 @@
         }
       ],
       "speak_template": "Quotation {quoteNumber} for company {customerName}. Status {workflowStatusCode}, amount {amount} dollars. Due on {followDate}, assigned to {customAssignedTo}.",
-      "prompt": "Quotations and Pricing search page (/quotation/quote). Filter quotations by quote number (QUO-), workflow status (INQUIRE, OFFERED, WON, LOST, BOOKED, HANDOVER, FOLLOWUP, OVERDUE, DUETODAY, UPCOMING, REOPEN), transport mode (Sea, Air, Road), assigned sales representative, warehouse quote toggle, and follow-up date ranges."
+      "prompt": "Quotations and Pricing search page (/quotation/quote). Filter quotations by quote number (QUO-), workflow status (INQUIRE, OFFERED, WON, LOST, BOOKED, HANDOVER, FOLLOWUP, OVERDUE, DUETODAY, UPCOMING, REOPEN), transport mode (Sea, Air, Road), assigned sales representative, warehouse quote toggle, and follow-up date ranges.",
+      "create_request_triggers": [
+        {
+          "description": "Create / make / submit a quotation or quote",
+          "pattern": "\\b(?:create|make|submit|raise|post|start|initiate|open|build|draft)\\s+(?:a\\s+|an\\s+|the\\s+|me\\s+a\\s+)?(?:new\\s+)?(?:quotation|quote)\\b"
+        },
+        {
+          "description": "Provide / get / give / need / want / request a quotation, quote, or rate",
+          "pattern": "\\b(?:provide|get|give|need|want|require|request|fetch|obtain|prepare|generate|calculate|calc|show|check)\\s+(?:a\\s+|an\\s+|me\\s+a\\s+|me\\s+|us\\s+a\\s+|us\\s+)?(?:new\\s+)?(?:quotation|quote|rate|rates|freight\\s+rate|shipping\\s+rate|cargo\\s+rate|sea\\s+rate|ocean\\s+rate|air\\s+rate|road\\s+rate)\\b"
+        },
+        {
+          "description": "Quotation / rate for a specific route or commodity (standalone noun-first intent)",
+          "pattern": "\\b(?:quotation|quote|rate|rates|freight\\s+rate|shipping\\s+rate|cargo\\s+rate)\\s+(?:for|on|of|from)\\b"
+        },
+        {
+          "description": "I need / I want a rate or quote",
+          "pattern": "\\bI(?:'d|\\s+would)?\\s+(?:like|need|want)\\s+(?:a\\s+|an\\s+)?(?:quotation|quote|rate|freight\\s+rate|shipping\\s+rate)\\b"
+        },
+        {
+          "description": "How much for / what is the rate / what would it cost",
+          "pattern": "\\b(?:how\\s+much|what(?:'s|\\s+is|\\s+would\\s+it|\\s+are)\\s+the?\\s+(?:rate|price|cost|charges?|freight))\\b"
+        },
+        {
+          "description": "Book a shipment / cargo / freight (booking intent also triggers quote creation flow)",
+          "pattern": "\\b(?:book|arrange|organize)\\s+(?:a\\s+|an\\s+)?(?:new\\s+)?(?:shipment|cargo|freight|booking)\\b"
+        }
+      ]
     },
     {
       "key": "shipments",

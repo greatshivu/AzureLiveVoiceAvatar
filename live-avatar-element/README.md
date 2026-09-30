@@ -4,6 +4,11 @@ A framework-agnostic, standalone **Web Component** (Custom Elements v1) for inte
 
 Compatible out-of-the-box with **Angular (14–19+)**, **React**, **Vue**, **ASP.NET Core**, **.NET MAUI / Blazor**, and **vanilla HTML/JavaScript**.
 
+## Screenshots
+
+*(Placeholder for Live Avatar Component screenshot - replace with actual image path)*
+`![Live Avatar Web Component](docs/screenshots/live-avatar-element.png)`
+
 ---
 
 ## Table of Contents
@@ -36,7 +41,7 @@ The Live Avatar Web Component operates as a client UI that communicates with a *
 │                   Browser Application                  │
 │  ┌──────────────────────────────────────────────────┐  │
 │  │ <live-avatar-popup app-code="cvs"                │  │
-│  │                    api-url="http://localhost:8000">│  │
+│  │                  api-url="http://localhost:8000">│  │
 │  └────────────────────────┬─────────────────────────┘  │
 └───────────────────────────┼────────────────────────────┘
                             │ REST (/api/pages, /api/config, /api/prompt)

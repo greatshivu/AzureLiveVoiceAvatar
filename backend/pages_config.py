@@ -48,10 +48,16 @@ CLICK_VERB = re.compile(
 )
 CREATE_VERB = re.compile(
     r"\b(?:"
+    # Original: explicit "create/submit/make a request"
     r"(?:create|submit|send|raise|post|make)\s+(?:a\s+|an\s+|the\s+)?(?:new\s+)?request"
     r"|new\s+(?:create\s+)?request"
+    # Original: create/submit/make a quote/order/shipment
     r"|(?:create|submit|request|make|raise|post)\s+(?:a\s+|an\s+|the\s+)?(?:new\s+)?(?:order|quote|quotation|shipment|incident|purchase\s+order|ticket|booking)"
     r"|new\s+(?:order|quote|quotation|shipment|incident|purchase\s+order)\s+request"
+    # Extended: provide/get/give/need/want/calculate/generate/fetch/show/check quotation/quote/rate
+    r"|(?:provide|get|give|need|want|require|calculate|calc|generate|fetch|show|check|prepare|obtain|request)\s+(?:a\s+|an\s+|me\s+a\s+|me\s+|us\s+a\s+|us\s+)?(?:new\s+)?(?:quote|quotation|rate|rates|freight\s+rate|shipping\s+rate|cargo\s+rate|sea\s+rate|ocean\s+rate|air\s+rate|road\s+rate)"
+    # Extended: "book a shipment", "book cargo", "book freight"
+    r"|(?:book|arrange|organize)\s+(?:a\s+|an\s+)?(?:new\s+)?(?:shipment|cargo|freight|booking)"
     r")\b",
     re.IGNORECASE
 )
@@ -432,23 +438,50 @@ def _detect_grid_click(
 
 def _detect_create_request(
     text: str,
-    direct_args: Dict[str, Any]
+    direct_args: Dict[str, Any],
+    pages: Optional[List[Dict[str, Any]]] = None,
+    current_page: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Detect create request from natural language text or direct arguments.
+
+    Checks in priority order:
+      1. Explicit action argument (create_request / new_request etc.)
+      2. Application-specific create_request_triggers from page config (e.g. cvs_pages_config.json)
+      3. Global CREATE_VERB regex patterns
+
     Returns dict with request_text, or None.
     """
     t = (text or "").strip()
     explicit_act = str(direct_args.get("action") or "").lower().strip()
 
+    # 1. Explicit action argument always wins
     if explicit_act in ("create_request", "create", "new_request", "submit_request"):
         req_text = direct_args.get("request_text") or direct_args.get("text") or direct_args.get("user_input") or t
         return {"request_text": str(req_text).strip()}
 
-    if not t or not CREATE_VERB.search(t):
+    if not t:
         return None
 
-    # Extract text after prefix
+    # 2. Application-specific triggers from page config (create_request_triggers list)
+    if pages:
+        for page in pages:
+            triggers = page.get("create_request_triggers", [])
+            for trigger in triggers:
+                pattern = trigger.get("pattern", "")
+                if not pattern:
+                    continue
+                try:
+                    if re.search(pattern, t, re.IGNORECASE):
+                        return {"request_text": t}
+                except re.error:
+                    pass
+
+    # 3. Global CREATE_VERB regex
+    if not CREATE_VERB.search(t):
+        return None
+
+    # Extract the meaningful request text after verb prefix
     m_pref = re.search(
         r"\b(?:(?:create|submit|send|raise|post|make)\s+(?:a\s+|an\s+|the\s+)?(?:new\s+)?request|new\s+(?:create\s+)?request)\s*[:\-]?\s*(.*)",
         t,
@@ -458,7 +491,7 @@ def _detect_create_request(
         req_text = m_pref.group(1).strip()
     else:
         m_entity = re.search(
-            r"\b((?:create|submit|request|make|raise|post)\s+(?:a\s+|an\s+|the\s+)?(?:new\s+)?(?:order|quote|quotation|shipment|incident|purchase\s+order|ticket|booking)\b.*)",
+            r"\b((?:create|submit|request|make|raise|post|provide|get|give|need|want|require|calculate|calc|generate|fetch|show|check|prepare|obtain|book|arrange|organize)\s+(?:a\s+|an\s+|me\s+a\s+|me\s+|us\s+a\s+|us\s+)?(?:new\s+)?(?:order|quote|quotation|rate|rates|freight\s+rate|shipping\s+rate|cargo\s+rate|shipment|incident|purchase\s+order|ticket|booking)\b.*)",
             t,
             re.IGNORECASE
         )
@@ -1170,7 +1203,7 @@ async def execute_action(
         }
         return tool_output, ui_action
 
-    create_info = _detect_create_request(raw_text, direct_args)
+    create_info = _detect_create_request(raw_text, direct_args, pages, current_page)
     if create_info is not None:
         page_info = _detect_target_page(pages, raw_text, current_page, explicit_target) or (pages[0] if pages else None)
         page_key = page_info["key"] if page_info else (current_page or "orders")
@@ -1232,7 +1265,7 @@ async def execute_action(
     explicit_action = str(direct_args.get("action") or "").lower()
     is_reset = bool(RESET_VERB.search(raw_text)) or direct_args.get("reset") is True or explicit_action in ("reset", "clear")
 
-    create_info = _detect_create_request(raw_text, direct_args)
+    create_info = _detect_create_request(raw_text, direct_args, pages, current_page)
     click_info = _detect_grid_click(raw_text, direct_args, page_info)
 
     read_idx = None
@@ -1575,9 +1608,10 @@ def parse_command_internal(
         }
 
     # Check create request FIRST so create requests are never misclassified as grid filters
-    create_info = _detect_create_request(text, {})
+    _early_pages = get_pages_config(app_code)
+    create_info = _detect_create_request(text, {}, _early_pages, current_page)
     if create_info is not None:
-        pages = get_pages_config(app_code)
+        pages = _early_pages
         page_info = _detect_target_page(pages, text, current_page) or (pages[0] if pages else None)
         page_key = page_info["key"] if page_info else (current_page or "orders")
         page_route = page_info.get("route", f"/{page_key}") if page_info else f"/{page_key}"

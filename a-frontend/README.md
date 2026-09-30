@@ -1,27 +1,27 @@
-# AFrontend
+# Angular Frontend Integration (a-frontend)
 
-This project was generated with [Angular CLI](https://github.com/angular/angular-cli) version 18.2.2.
+This is an Angular 18 application that demonstrates how to seamlessly integrate the framework-agnostic `<live-avatar-popup>` web component.
 
-## Development server
+## Overview
 
-Run `ng serve` for a dev server. Navigate to `http://localhost:4200/`. The application will automatically reload if you change any of the source files.
+The application binds to the custom events emitted by the `live-avatar-element` package and handles complex, multi-turn workflows like quotation creation and page navigation.
 
-## Code scaffolding
+### Key Integration Points
+*   **Web Component Registration**: The `<live-avatar-popup>` is registered as a custom element in Angular (requires `CUSTOM_ELEMENTS_SCHEMA`).
+*   **Event Handling**: Listens to custom events like `avatar-create-request` to trigger application-specific logic (e.g., calling backend APIs to create a quote).
+*   **Conversation Mode**: Demonstrates how to handle multi-turn conversations by implementing the `conversationHandler` callback.
 
-Run `ng generate component component-name` to generate a new component. You can also use `ng generate directive|pipe|service|class|guard|interface|enum|module`.
+## Screenshots
+
+*(Placeholder for Angular UI screenshot - replace with actual image path)*
+`![Angular Frontend](docs/screenshots/angular-ui.png)`
+
+## Development Server
+
+1.  Ensure you have built the `live-avatar-element` web component first, and copied its `dist/` contents to `node_modules/live-avatar-element/dist/` (or properly linked it).
+2.  Run `npm install` to install dependencies.
+3.  Run `ng serve` for a dev server. Navigate to `http://localhost:4200/`. The application will automatically reload if you change any of the source files.
 
 ## Build
 
 Run `ng build` to build the project. The build artifacts will be stored in the `dist/` directory.
-
-## Running unit tests
-
-Run `ng test` to execute the unit tests via [Karma](https://karma-runner.github.io).
-
-## Running end-to-end tests
-
-Run `ng e2e` to execute the end-to-end tests via a platform of your choice. To use this command, you need to first add a package that implements end-to-end testing capabilities.
-
-## Further help
-
-To get more help on the Angular CLI use `ng help` or go check out the [Angular CLI Overview and Command Reference](https://angular.dev/tools/cli) page.

@@ -55,6 +55,11 @@ export class LiveAvatarElement extends HTMLElement {
   private customWsUrl: string = "";
   private activeFilters: Record<string, any> = {};
   private messages: Array<{ role: "user" | "assistant"; text: string; id: number }> = [];
+  private isConversationMode: boolean = false;
+  private conversationHandler: ((text: string) => void | Promise<void>) | null = null;
+  private isSpeaking: boolean = false;              // true while Web Speech API is speaking
+  private isHandlingRequest: boolean = false;       // true while a create request is being processed
+  private suppressAgentTranscript: boolean = false; // suppress Azure agent TTS when we handle create_request ourselves
 
   // Media & Network
   private ws: WebSocket | null = null;
@@ -62,6 +67,7 @@ export class LiveAvatarElement extends HTMLElement {
   private micSession: MicSession | null = null;
   private peerMicStream: MediaStream | null = null;
   private unloadListener: (() => void) | null = null;
+  private convModeEventListener: ((e: any) => void) | null = null;
 
   // DOM Elements
   private fabBtn!: HTMLButtonElement;
@@ -91,6 +97,15 @@ export class LiveAvatarElement extends HTMLElement {
     super();
     this.root = this.attachShadow({ mode: "open" });
     this.client = new AvatarClient("http://localhost:8000");
+
+    // Bind public API methods directly on the instance
+    this.setConversationMode = this.setConversationMode.bind(this);
+    this.displayBotResponse = this.displayBotResponse.bind(this);
+    this.setCreateRequestHandler = this.setCreateRequestHandler.bind(this);
+    this.speak = this.speak.bind(this);
+    this.setOptions = this.setOptions.bind(this);
+    this.pushMessage = this.pushMessage.bind(this);
+    this.sendCreateRequest = this.sendCreateRequest.bind(this);
   }
 
   public connectedCallback() {
@@ -114,6 +129,23 @@ export class LiveAvatarElement extends HTMLElement {
       this.useAgent = false;
     }
 
+    // Re-bind public API methods directly on this instance
+    (this as any).setConversationMode = this.setConversationMode.bind(this);
+    (this as any).displayBotResponse = this.displayBotResponse.bind(this);
+    (this as any).setCreateRequestHandler = this.setCreateRequestHandler.bind(this);
+    (this as any).speak = this.speak.bind(this);
+    (this as any).setOptions = this.setOptions.bind(this);
+    (this as any).pushMessage = this.pushMessage.bind(this);
+    (this as any).sendCreateRequest = this.sendCreateRequest.bind(this);
+
+    // Event listener for conversation mode
+    this.convModeEventListener = (e: any) => {
+      const detail = e?.detail || {};
+      this.setConversationMode(detail.active !== false, detail.handler);
+    };
+    this.addEventListener("set-conversation-mode", this.convModeEventListener);
+    this.addEventListener("avatar-set-conversation-mode", this.convModeEventListener);
+
     this.render();
     this.bindEvents();
     this.initLifecycleGuards();
@@ -124,8 +156,18 @@ export class LiveAvatarElement extends HTMLElement {
     }
 
     if (typeof window !== "undefined") {
-      (window as any).sendCvsCreateRequest = (text: string, analyzed?: string | null, raw?: string) => this.sendCreateRequest(text, analyzed, raw);
-      (window as any).cvsCreateRequest = (text: string, analyzed?: string | null, raw?: string) => this.sendCreateRequest(text, analyzed, raw);
+      (window as any).__liveAvatarElement = this;
+      window.addEventListener("set-conversation-mode", this.convModeEventListener);
+      window.addEventListener("avatar-set-conversation-mode", this.convModeEventListener);
+
+      if (!(window as any).sendCvsCreateRequest) {
+        (window as any).sendCvsCreateRequest = (text: string, analyzed?: string | null, raw?: string) => this.sendCreateRequest(text, analyzed, raw);
+      }
+      if (!(window as any).cvsCreateRequest) {
+        (window as any).cvsCreateRequest = (text: string, analyzed?: string | null, raw?: string) => this.sendCreateRequest(text, analyzed, raw);
+      }
+
+      window.dispatchEvent(new CustomEvent("avatar-element-ready", { detail: { element: this } }));
     }
   }
 
@@ -136,11 +178,19 @@ export class LiveAvatarElement extends HTMLElement {
       window.removeEventListener("pagehide", this.unloadListener);
       this.unloadListener = null;
     }
+    if (this.convModeEventListener) {
+      this.removeEventListener("set-conversation-mode", this.convModeEventListener);
+      this.removeEventListener("avatar-set-conversation-mode", this.convModeEventListener);
+      if (typeof window !== "undefined") {
+        window.removeEventListener("set-conversation-mode", this.convModeEventListener);
+        window.removeEventListener("avatar-set-conversation-mode", this.convModeEventListener);
+      }
+      this.convModeEventListener = null;
+    }
     if (typeof window !== "undefined") {
-      try {
-        delete (window as any).sendCvsCreateRequest;
-        delete (window as any).cvsCreateRequest;
-      } catch (_) {}
+      if ((window as any).__liveAvatarElement === this) {
+        delete (window as any).__liveAvatarElement;
+      }
     }
   }
 
@@ -415,6 +465,105 @@ export class LiveAvatarElement extends HTMLElement {
   }
 
   /**
+   * Speak text aloud using Speech Synthesis (Web Speech API).
+   * Mutes the microphone capture during playback to prevent acoustic echo loops.
+   */
+  public speak(text: string) {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    try {
+      window.speechSynthesis.cancel();
+      const clean = (text || "").replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+      if (!clean) return;
+      const utterance = new SpeechSynthesisUtterance(clean);
+      utterance.rate = 1.0;
+      utterance.pitch = 1.0;
+      utterance.lang = "en-US";
+      const voices = window.speechSynthesis.getVoices();
+      const preferred = voices.find(v =>
+        (v.name.includes("Ava") || v.name.includes("Jenny") || v.name.includes("Natural") || v.name.includes("Samantha") || v.name.includes("Female") || v.name.includes("Google US English")) && v.lang.startsWith("en")
+      ) || voices.find(v => v.lang.startsWith("en"));
+      if (preferred) utterance.voice = preferred;
+
+      // Mute mic before speaking to prevent echo loop
+      this.isSpeaking = true;
+      utterance.onend = () => {
+        // Resume mic after a short buffer to allow echo to clear
+        setTimeout(() => { this.isSpeaking = false; }, 800);
+      };
+      utterance.onerror = () => { this.isSpeaking = false; };
+
+      window.speechSynthesis.speak(utterance);
+    } catch (e) {
+      this.isSpeaking = false;
+      console.warn("[LiveAvatarElement] Speech synthesis warning:", e);
+    }
+  }
+
+  /**
+   * Display a bot response message in transcript, speak it, and render options/suggestions.
+   */
+  public displayBotResponse(text: string, suggestions?: Array<any>, options?: { speak?: boolean }) {
+    const clean = (text || "").trim();
+    if (clean) {
+      this.pushMessage("assistant", clean);
+    }
+    if (options?.speak !== false && clean) {
+      this.speak(clean);
+    }
+    if (suggestions && suggestions.length > 0) {
+      this.setOptions(suggestions);
+    }
+  }
+
+  /**
+   * Display interactive options/suggestions chips in the hints area.
+   */
+  public setOptions(options: Array<any>, label: string = "Select an option:") {
+    if (!this.hintsBox) return;
+    this.hintsBox.innerHTML = "";
+    const labelEl = this.root.querySelector(".hints-label");
+
+    if (!options || options.length === 0) {
+      if (labelEl) labelEl.textContent = "Try saying…";
+      this.updateHints();
+      return;
+    }
+
+    if (labelEl) {
+      labelEl.textContent = label;
+    }
+
+    options.forEach(opt => {
+      const optText = typeof opt === "string" ? opt : (opt.englishText || opt.text || opt.label || opt.title || "");
+      if (!optText) return;
+      const btn = document.createElement("button");
+      btn.className = "option-chip";
+      btn.textContent = optText;
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.handleUserUtterance(optText);
+      });
+      this.hintsBox.appendChild(btn);
+    });
+  }
+
+  /**
+   * Enter or exit conversational mode (e.g. multi-turn quote creation).
+   * When active, user input is delegated directly to handler instead of search/navigation.
+   */
+  public setConversationMode(active: boolean, handler?: (text: string) => void | Promise<void>) {
+    this.isConversationMode = !!active;
+    if (handler) {
+      this.conversationHandler = handler;
+    } else if (!active) {
+      this.conversationHandler = null;
+      const labelEl = this.root.querySelector(".hints-label");
+      if (labelEl) labelEl.textContent = "Try saying…";
+      this.updateHints();
+    }
+  }
+
+  /**
    * Exposed function: Send a create request to CVS API.
    * Accessible directly on the web component, or globally via window.sendCvsCreateRequest(text)
    * and window.cvsCreateRequest(text).
@@ -430,13 +579,32 @@ export class LiveAvatarElement extends HTMLElement {
 
     console.log("[LiveAvatarElement] Executing exposed sendCreateRequest:", { text, raw, analyzed });
 
+    // Prevent duplicate concurrent processing
+    if (this.isHandlingRequest) {
+      console.warn("[LiveAvatarElement] sendCreateRequest already in progress, ignoring duplicate call for:", text.substring(0, 60));
+      return null;
+    }
+    this.isHandlingRequest = true;
+
+    // Show immediate "processing" feedback to the user — push to transcript AND speak it
+    const processingMsg = "Processing your request, please wait…";
+    this.pushMessage("assistant", processingMsg);
+    this.speak(processingMsg);
+
     let result: any = null;
+    let customHandled = false;
     try {
       if (typeof this.createRequestHandler === "function") {
+        customHandled = true;
         result = await this.createRequestHandler(text, analyzed, raw);
+      } else if (typeof (window as any).appComponentSendCvsCreateRequest === "function") {
+        customHandled = true;
+        result = await (window as any).appComponentSendCvsCreateRequest(text, analyzed, raw);
       } else if (typeof (window as any).cvsBotSendRequest === "function") {
+        customHandled = true;
         result = await (window as any).cvsBotSendRequest(text, analyzed, raw);
       } else if (typeof (window as any).cvsApi?.createRequest === "function") {
+        customHandled = true;
         result = await (window as any).cvsApi.createRequest(text, analyzed, raw);
       } else {
         const customUrl = this.getAttribute("create-api-url");
@@ -462,10 +630,19 @@ export class LiveAvatarElement extends HTMLElement {
     } catch (err) {
       console.warn("[LiveAvatarElement] sendCreateRequest error:", err);
       result = { status: "submitted", text, raw_text: raw, analyzed_text: analyzed, timestamp: new Date().toISOString() };
+    } finally {
+      // Always release the lock so the next request can be processed
+      this.isHandlingRequest = false;
     }
 
     const reqId = result?.request_id || result?.id || `REQ-${Date.now().toString().slice(-6)}`;
-    this.pushMessage("assistant", `Create request ${reqId} created: "${text}"`);
+    // Only display API response if returned and not already handled by host app custom handler
+    if (!customHandled && result) {
+      const apiRespText = (result.englishText || result.otherText || result.message || result.text || "").trim();
+      if (apiRespText) {
+        this.displayBotResponse(apiRespText, result.suggestions || []);
+      }
+    }
 
     // Dispatch custom event to host app
     this.dispatchEvent(
@@ -480,6 +657,7 @@ export class LiveAvatarElement extends HTMLElement {
           result,
           requestId: reqId,
           page: this.currentPage,
+          customHandled,
         },
         bubbles: true,
         composed: true,
@@ -721,19 +899,27 @@ export class LiveAvatarElement extends HTMLElement {
     this.fabBtn.addEventListener("click", () => this.open());
 
     const minimizeBtn = this.root.querySelector(".minimize-btn");
-    minimizeBtn?.addEventListener("click", () => {
+    minimizeBtn?.addEventListener("click", (e: Event) => {
+      e.stopPropagation();
       this.minimize();
     });
 
     const maximizeBtn = this.root.querySelector(".maximize-btn");
-    maximizeBtn?.addEventListener("click", () => {
+    maximizeBtn?.addEventListener("click", (e: Event) => {
+      e.stopPropagation();
       this.maximize();
     });
 
     const closeBtn = this.root.querySelector(".close-btn")!;
-    closeBtn.addEventListener("click", () => {
+    closeBtn.addEventListener("click", (e: Event) => {
+      e.stopPropagation();
       this.toggleAvatar(false);
       this.close();
+    });
+
+    const switchLabel = this.root.querySelector(".switch-label");
+    switchLabel?.addEventListener("click", (e: Event) => {
+      e.stopPropagation();
     });
 
     const popupHeader = this.root.querySelector(".popup-header");
@@ -894,7 +1080,7 @@ export class LiveAvatarElement extends HTMLElement {
     });
   }
 
-  private pushMessage(role: "user" | "assistant", text: string) {
+  public pushMessage(role: "user" | "assistant", text: string) {
     const id = Date.now() + Math.random();
     this.messages.push({ role, text, id });
     if (this.messages.length > 25) this.messages.shift();
@@ -1107,7 +1293,8 @@ export class LiveAvatarElement extends HTMLElement {
     if (this.micSession) return;
     try {
       this.micSession = await createMicrophoneSession((base64PCM16) => {
-        if (!this.avatarOn || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        // Skip sending audio while TTS is playing to prevent echo/loop
+        if (!this.avatarOn || !this.ws || this.ws.readyState !== WebSocket.OPEN || this.isSpeaking) return;
         this.ws.send(
           JSON.stringify({
             type: "input_audio_buffer.append",
@@ -1148,12 +1335,21 @@ export class LiveAvatarElement extends HTMLElement {
 
       case "ui.action":
         if (event.action) {
+          // Suppress the Azure agent's TTS voice when we handle create_request ourselves
+          if (event.action?.type === "create_request" && typeof this.createRequestHandler === "function") {
+            this.suppressAgentTranscript = true;
+          }
           this.executeResolvedAction(event.action);
         }
         break;
 
       case "conversation.item.input_audio_transcription.completed":
         if (event.transcript) {
+          // Ignore transcriptions that arrive while TTS is speaking (acoustic echo from speakers)
+          if (this.isSpeaking) {
+            console.log("[LiveAvatarElement] Suppressed echo transcription while TTS active:", (event.transcript as string).substring(0, 60));
+            break;
+          }
           this.pushMessage("user", event.transcript);
           if (!this.useAgent) {
             // Direct API mode (unchecked)
@@ -1169,7 +1365,13 @@ export class LiveAvatarElement extends HTMLElement {
 
       case "response.audio_transcript.done":
         if (event.transcript && this.useAgent) {
-          this.pushMessage("assistant", event.transcript);
+          if (this.suppressAgentTranscript) {
+            // The agent spoke its create_request acknowledgement — we have our own response
+            this.suppressAgentTranscript = false;
+            console.log("[LiveAvatarElement] Suppressed Azure agent transcript (create_request handled by host app):", (event.transcript as string).substring(0, 60));
+          } else {
+            this.pushMessage("assistant", event.transcript);
+          }
         }
         break;
 
@@ -1187,7 +1389,37 @@ export class LiveAvatarElement extends HTMLElement {
   private handleUserUtterance(text: string) {
     const t = text.trim();
     if (!t) return;
+
+    // Block re-entry while the bot is speaking (prevents acoustic echo loop)
+    if (this.isSpeaking) {
+      console.log("[LiveAvatarElement] Suppressed utterance while TTS is active:", t.substring(0, 60));
+      return;
+    }
+
     this.pushMessage("user", t);
+
+    // If in active conversation mode (e.g. multi-turn quote creation dialog):
+    if (this.isConversationMode && typeof this.conversationHandler === "function") {
+      const isNewRequest = /^(?:(?:create|submit|make|raise|post)\s+(?:a\s+|an\s+|the\s+)?(?:new\s+)?(?:quote|quotation|request)|new\s+(?:quote|quotation|request)|start\s+(?:new\s+)?(?:quote|request)|cancel|reset)\b/i.test(t);
+      if (isNewRequest) {
+        // User explicitly wants a new request — exit conversation mode and fall through
+        this.setConversationMode(false);
+      } else {
+        // Forward turn directly to active conversation handler
+        try {
+          this.conversationHandler(t);
+        } catch (e) {
+          console.warn("[LiveAvatarElement] conversationHandler error:", e);
+        }
+        return;
+      }
+    }
+
+    // Quote / rate / freight creation intent detection is handled by the backend
+    // config (cvs_pages_config.json create_request_triggers + CREATE_VERB regex).
+    // The agent returns a create_request ui.action → executeResolvedAction →
+    // sendCreateRequest → createRequestHandler (Angular sendCvsCreateRequest).
+    // This keeps detection application-specific and config-driven.
 
     if (this.useAgent) {
       if (this.avatarOn && this.ws?.readyState === WebSocket.OPEN) {
@@ -1383,8 +1615,6 @@ export class LiveAvatarElement extends HTMLElement {
       const analyzedText = this.useAgent
         ? (action.analyzed_text !== undefined ? action.analyzed_text : (action.analyzedText !== undefined ? action.analyzedText : reqText))
         : null;
-      const msg = action.message || `Submitting create request: "${reqText}" to CVS.`;
-      this.pushMessage("assistant", msg);
 
       this.sendCreateRequest(reqText, analyzedText, rawText);
     } else if (action.message) {
